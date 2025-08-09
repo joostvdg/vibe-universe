@@ -1,9 +1,10 @@
+
 package net.joostvdg.vibe_universe;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.*;
-import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
@@ -23,15 +24,17 @@ import com.badlogic.gdx.utils.ScreenUtils;
 public class VibeUniverse extends ApplicationAdapter {
 
     // ---------- Config ----------
-    private static final float AU_TO_WORLD = 8f;         // 1 AU == 8 world units (keeps Earth ~8 units away)
-    private static final float TIME_SCALE_DAYS_PER_SEC = 10f; // sim time speed
-    private static final int ORBIT_SEGMENTS = 256;       // polyline detail
+    private static final float AU_TO_WORLD = 8f;               // 1 AU in world units
+    private static final int ORBIT_SEGMENTS = 256;             // polyline detail
+    private static final float MIN_TIME_SCALE = 0f;            // days / sec
+    private static final float MAX_TIME_SCALE = 2000f;         // days / sec
+    private static final float TIME_INC = 2f;                  // step when pressing [ or ]
 
     // ---------- Rendering ----------
     private PerspectiveCamera camera;
     private ModelBatch modelBatch;
     private Environment environment;
-    private Model sunModel, planetModel;
+    private Model sunModel, planetModel, moonModel;
     private ModelInstance sunInstance;
     private ShapeRenderer shapeRenderer;
     private SpriteBatch uiBatch;
@@ -39,9 +42,12 @@ public class VibeUniverse extends ApplicationAdapter {
 
     // ---------- Simulation ----------
     private float simTimeDays = 0f;
+    private float timeScaleDaysPerSec = 10f;                   // adjustable
+    private boolean drawOrbits = true;
+    private boolean paused = false;
 
-    // Only render two planets for now (Earth + Mars)
-    private final Array<Planet> planets = new Array<>();
+    private final Array<Body> planets = new Array<>();
+    private final Array<Moon> moons = new Array<>();
 
     // Data feed for all 8 planets (name, # from Sun, period days)
     private static class PlanetInfo {
@@ -57,13 +63,13 @@ public class VibeUniverse extends ApplicationAdapter {
         modelBatch = new ModelBatch();
         shapeRenderer = new ShapeRenderer();
         uiBatch = new SpriteBatch();
-        font = new BitmapFont(); // default font; we can swap to FreeType later
+        font = new BitmapFont();
 
         camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        camera.position.set(0f, 10f, 22f);
+        camera.position.set(0f, 12f, 26f);
         camera.lookAt(0, 0, 0);
         camera.near = 0.1f;
-        camera.far = 400f;
+        camera.far = 800f;
         camera.update();
 
         environment = new Environment();
@@ -75,24 +81,31 @@ public class VibeUniverse extends ApplicationAdapter {
                 new Material(ColorAttribute.createDiffuse(new Color(1f, 0.85f, 0.4f, 1f))),
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
 
-        // Simple shared planet sphere (we’ll vary colors per instance)
         planetModel = builder.createSphere(1.2f, 1.2f, 1.2f, 24, 24,
                 new Material(ColorAttribute.createDiffuse(new Color(0.7f, 0.8f, 1f, 1f))),
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
 
+        moonModel = builder.createSphere(0.5f, 0.5f, 0.5f, 18, 18,
+                new Material(ColorAttribute.createDiffuse(new Color(0.8f, 0.8f, 0.85f, 1f))),
+                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+
         sunInstance = new ModelInstance(sunModel);
 
-        // --- Add Earth (#3) and Mars (#4) with real-ish orbital params ---
-        // Params: name, index, semi-major axis (AU), eccentricity, orbital period (days), color
-        planets.add(new Planet("Earth", 3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f, 0.7f, 1f, 1f)));
-        planets.add(new Planet("Mars",  4, 1.523679f, 0.0934f, 686.971f, new Color(1f, 0.5f, 0.35f, 1f)));
+        // --------- Planets (semi-major axis in AU, e, period days) ---------
+        addPlanet("Mercury", 1, 0.387098f, 0.2056f, 87.969f, new Color(0.7f, 0.7f, 0.7f, 1f));
+        addPlanet("Venus",   2, 0.723332f, 0.0067f, 224.701f, new Color(1.0f, 0.9f, 0.7f, 1f));
+        addPlanet("Earth",   3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f, 0.7f, 1f, 1f));
+        addPlanet("Mars",    4, 1.523679f, 0.0934f, 686.971f, new Color(1f, 0.5f, 0.35f, 1f));
+        addPlanet("Jupiter", 5, 5.2044f,   0.0489f, 4332.59f, new Color(0.9f, 0.8f, 0.6f, 1f));
+        addPlanet("Saturn",  6, 9.5826f,   0.0565f, 10759.22f,new Color(0.95f, 0.9f, 0.75f, 1f));
+        addPlanet("Uranus",  7, 19.2184f,  0.046f,  30688.5f, new Color(0.7f, 0.9f, 0.95f, 1f));
+        addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f, 0.7f, 1f, 1f));
 
-        // Precompute orbit polylines and create instances
-        for (Planet p : planets) {
-            p.initGraphics();
-        }
+        // Two moons (a couple): Earth's Moon and Mars' Phobos
+        addMoon("Moon",   "Earth", 0.00257f, 0.0549f, 27.3217f, new Color(0.85f, 0.85f, 0.9f, 1f));
+        addMoon("Phobos", "Mars",  0.0000627f, 0.0151f, 0.31891f, new Color(0.8f, 0.7f, 0.6f, 1f));
 
-        // Data feed (all 8 planets). Periods ~ sidereal days.
+        // Data feed
         feed.addAll(
                 new PlanetInfo("Mercury", 1, 87.969f),
                 new PlanetInfo("Venus",   2, 224.701f),
@@ -104,51 +117,78 @@ public class VibeUniverse extends ApplicationAdapter {
                 new PlanetInfo("Neptune", 8, 60182f)
         );
 
+        // Precompute orbits
+        for (Body p : planets) p.initOrbit();
+        for (Moon m : moons) m.initOrbit();
+
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDepthFunc(GL20.GL_LEQUAL);
     }
 
+    private void addPlanet(String name, int index, float aAU, float e, float periodDays, Color color) {
+        Body p = new Body(name, index, aAU, e, periodDays, color, planetModel);
+        planets.add(p);
+    }
+
+    private void addMoon(String name, String parentName, float aAU, float e, float periodDays, Color color) {
+        Body parent = null;
+        for (Body p : planets) if (p.name.equals(parentName)) { parent = p; break; }
+        if (parent == null) return;
+        Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel);
+        moons.add(m);
+    }
+
     @Override
     public void render() {
+        // Controls
+        if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) paused = !paused;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.O)) drawOrbits = !drawOrbits;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.R)) simTimeDays = 0f;
+        if (Gdx.input.isKeyJustPressed(Input.Keys.LEFT_BRACKET)) {
+            timeScaleDaysPerSec = Math.max(MIN_TIME_SCALE, timeScaleDaysPerSec - TIME_INC);
+        }
+        if (Gdx.input.isKeyJustPressed(Input.Keys.RIGHT_BRACKET)) {
+            timeScaleDaysPerSec = Math.min(MAX_TIME_SCALE, timeScaleDaysPerSec + TIME_INC);
+        }
+
         float dt = Gdx.graphics.getDeltaTime();
-        simTimeDays += TIME_SCALE_DAYS_PER_SEC * dt;
+        if (!paused) simTimeDays += timeScaleDaysPerSec * dt;
 
         ScreenUtils.clear(0.05f, 0.05f, 0.08f, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
 
-        // Update planet transforms along their ellipses
-        for (Planet p : planets) {
-            p.updatePosition(simTimeDays);
-        }
+        // Update positions
+        for (Body p : planets) p.updatePosition(simTimeDays);
+        for (Moon m : moons) m.updatePosition(simTimeDays);
 
         // 3D models
         modelBatch.begin(camera);
         modelBatch.render(sunInstance, environment);
-        for (Planet p : planets) {
-            modelBatch.render(p.instance, environment);
-        }
+        for (Body p : planets) modelBatch.render(p.instance, environment);
+        for (Moon m : moons) modelBatch.render(m.instance, environment);
         modelBatch.end();
 
-        // Orbit polylines
-        shapeRenderer.setProjectionMatrix(camera.combined);
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
-        // Thin lines; >1f often ignored by drivers, so keep 1f
-        Gdx.gl.glLineWidth(1f);
-        for (Planet p : planets) {
-            p.drawOrbit(shapeRenderer);
+        // Orbit rings
+        if (drawOrbits) {
+            shapeRenderer.setProjectionMatrix(camera.combined);
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+            Gdx.gl.glLineWidth(1f);
+            for (Body p : planets) p.drawOrbit(shapeRenderer);
+            for (Moon m : moons) m.drawOrbit(shapeRenderer);
+            shapeRenderer.end();
         }
-        shapeRenderer.end();
 
-        // Data feed (UI)
+        // UI
         uiBatch.begin();
         float x = 12f, y = Gdx.graphics.getHeight() - 12f;
         font.draw(uiBatch, "Vibe Universe — Data Feed", x, y);
         y -= 18f;
-        for (PlanetInfo pi : feed) {
-            String line = "#" + pi.index + "  " + pi.name + " — " + String.format("%.3f d", pi.periodDays);
-            font.draw(uiBatch, line, x, y);
-            y -= 16f;
-        }
+        for (PlanetInfo pi : feed) { font.draw(uiBatch, "#" + pi.index + "  " + pi.name + " — " + String.format("%.3f d", pi.periodDays), x, y); y -= 16f; }
+
+        y -= 8f;
+        font.draw(uiBatch, String.format("Sim time: %.1f days", simTimeDays), x, y); y -= 16f;
+        font.draw(uiBatch, String.format("Time scale: %.1f days/sec  [%s]", timeScaleDaysPerSec, paused ? "PAUSED" : "RUNNING"), x, y); y -= 16f;
+        font.draw(uiBatch, "Controls: Space=Pause, [ / ]=Slower/Faster, O=Toggle Orbits, R=Reset Time", x, y);
         uiBatch.end();
     }
 
@@ -167,11 +207,12 @@ public class VibeUniverse extends ApplicationAdapter {
         font.dispose();
         if (sunModel != null) sunModel.dispose();
         if (planetModel != null) planetModel.dispose();
+        if (moonModel != null) moonModel.dispose();
     }
 
-    // ------------------ Planet (elliptical orbit) ------------------
+    // ------------------ Orbital body ------------------
 
-    private class Planet {
+    private static class Body {
         final String name;
         final int index;
         final float aAU;         // semi-major axis (AU)
@@ -179,15 +220,14 @@ public class VibeUniverse extends ApplicationAdapter {
         final float periodDays;  // sidereal period (days)
         final Color color;
 
-        final float aWorld;      // semi-major (world units)
-        final float bWorld;      // semi-minor (world units)
+        final float aWorld;      // world units
+        final float bWorld;      // world units
 
         final ModelInstance instance;
-
-        // Precomputed orbit polyline points (world space, coplanar with XY)
         final Array<Vector3> orbitPoints = new Array<>(ORBIT_SEGMENTS + 1);
+        final Vector3 position = new Vector3();
 
-        Planet(String name, int index, float aAU, float e, float periodDays, Color color) {
+        Body(String name, int index, float aAU, float e, float periodDays, Color color, Model sharedModel) {
             this.name = name;
             this.index = index;
             this.aAU = aAU;
@@ -198,50 +238,35 @@ public class VibeUniverse extends ApplicationAdapter {
             this.aWorld = aAU * AU_TO_WORLD;
             this.bWorld = aWorld * (float)Math.sqrt(1.0 - (e * e));
 
-            // Create a colored instance of the shared planet sphere
-            this.instance = new ModelInstance(planetModel);
-            // Tint via material color
+            this.instance = new ModelInstance(sharedModel);
             for (Material m : instance.materials) {
                 m.set(ColorAttribute.createDiffuse(this.color));
             }
         }
 
-        void initGraphics() {
-            // Precompute ellipse polyline in orbital plane (XY), centered on Sun at origin.
-            // Parametric via eccentric anomaly E ∈ [0, 2π]:
-            // x = a (cosE - e), y = b sinE
+        void initOrbit() {
             orbitPoints.clear();
             for (int i = 0; i <= ORBIT_SEGMENTS; i++) {
                 float t = (float)i / (float)ORBIT_SEGMENTS;
                 float E = t * MathUtils.PI2;
                 float x = aWorld * (MathUtils.cos(E) - e);
-                float y = bWorld * MathUtils.sin(E);
-                orbitPoints.add(new Vector3(x, 0f, y)); // use Z for the second axis so the camera looks down slightly
+                float z = bWorld * MathUtils.sin(E);
+                orbitPoints.add(new Vector3(x, 0f, z));
             }
         }
 
         void updatePosition(float simDays) {
-            // Mean motion (rad/day)
             float n = MathUtils.PI2 / periodDays;
-            // Mean anomaly (we set M0 = 0 at t=0 → periapsis)
             float M = n * simDays;
-
-            // Normalize M to [-pi, pi] for better convergence
             M = (float)Math.atan2(Math.sin(M), Math.cos(M));
-
-            // Solve Kepler's equation: M = E - e sin E for E
             float E = keplerSolve(M, e);
-
-            // Position in orbital plane (XY) using eccentric anomaly
             float x = aWorld * (MathUtils.cos(E) - e);
-            float y = bWorld * MathUtils.sin(E);
-
-            // Place in XZ plane for nicer 3D view (y as Z)
-            instance.transform.setToTranslation(x, 0f, y);
+            float z = bWorld * MathUtils.sin(E);
+            position.set(x, 0f, z);
+            instance.transform.setToTranslation(position);
         }
 
         void drawOrbit(ShapeRenderer sr) {
-            // Draw polyline as line segments
             for (int i = 0; i < orbitPoints.size - 1; i++) {
                 Vector3 a = orbitPoints.get(i);
                 Vector3 b = orbitPoints.get(i + 1);
@@ -249,18 +274,48 @@ public class VibeUniverse extends ApplicationAdapter {
             }
         }
 
-        // Newton-Raphson solver for E (eccentric anomaly)
-        private float keplerSolve(float M, float e) {
-            // Good starter (approx by M + e*sinM*(1+e*cosM))
+        protected float keplerSolve(float M, float e) {
             float E = M + e * MathUtils.sin(M) * (1f + e * MathUtils.cos(M));
             for (int i = 0; i < 8; i++) {
-                float f = E - e * MathUtils.sin(E) - M;          // f(E)
-                float fp = 1f - e * MathUtils.cos(E);            // f'(E)
+                float f = E - e * MathUtils.sin(E) - M;
+                float fp = 1f - e * MathUtils.cos(E);
                 float d = f / fp;
                 E -= d;
                 if (Math.abs(d) < 1e-6f) break;
             }
             return E;
+        }
+    }
+
+    private static class Moon extends Body {
+        final Body parent;
+
+        Moon(String name, Body parent, float aAU, float e, float periodDays, Color color, Model sharedModel) {
+            super(name, 0, aAU, e, periodDays, color, sharedModel);
+            this.parent = parent;
+        }
+
+        @Override
+        void drawOrbit(ShapeRenderer sr) {
+            for (int i = 0; i < orbitPoints.size - 1; i++) {
+                Vector3 a = orbitPoints.get(i);
+                Vector3 b = orbitPoints.get(i + 1);
+                float ax = a.x + parent.position.x, az = a.z + parent.position.z;
+                float bx = b.x + parent.position.x, bz = b.z + parent.position.z;
+                sr.line(ax, 0f, az, bx, 0f, bz, color, color);
+            }
+        }
+
+        @Override
+        void updatePosition(float simDays) {
+            float n = MathUtils.PI2 / periodDays;
+            float M = n * simDays;
+            M = (float)Math.atan2(Math.sin(M), Math.cos(M));
+            float E = keplerSolve(M, e);
+            float x = aWorld * (MathUtils.cos(E) - e);
+            float z = bWorld * MathUtils.sin(E);
+            position.set(parent.position.x + x, 0f, parent.position.z + z);
+            instance.transform.setToTranslation(position);
         }
     }
 }
