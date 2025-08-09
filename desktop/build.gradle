@@ -1,0 +1,13 @@
+apply plugin: "application"
+
+dependencies {
+    implementation project(":core")
+    implementation "com.badlogicgames.gdx:gdx-backend-lwjgl3:${gdxVersion}"
+    implementation "com.badlogicgames.gdx:gdx:${gdxVersion}"
+    runtimeOnly "com.badlogicgames.gdx:gdx-platform:${gdxVersion}:natives-desktop"
+}
+
+application {
+    mainClass = "net.joostvdg.vibe_universe.DesktopLauncher"
+    applicationName = "vibe-universe"
+}
