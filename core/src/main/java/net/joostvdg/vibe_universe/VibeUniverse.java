@@ -1,11 +1,16 @@
-
 package net.joostvdg.vibe_universe;
 
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
-import com.badlogic.gdx.graphics.*;
+import com.badlogic.gdx.InputAdapter;
+import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.graphics.GL20;
+import com.badlogic.gdx.graphics.OrthographicCamera;
+import com.badlogic.gdx.graphics.PerspectiveCamera;
+import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
+import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.graphics.g3d.Environment;
@@ -17,11 +22,19 @@ import com.badlogic.gdx.graphics.g3d.attributes.ColorAttribute;
 import com.badlogic.gdx.graphics.g3d.environment.DirectionalLight;
 import com.badlogic.gdx.graphics.g3d.utils.ModelBuilder;
 import com.badlogic.gdx.math.MathUtils;
+import com.badlogic.gdx.math.Rectangle;
+import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ScreenUtils;
 
+import java.awt.*;
+
 public class VibeUniverse extends ApplicationAdapter {
+
+    // ---------- App state (Splash → Sim) ----------
+    private enum AppState { SPLASH, SIM }
+    private AppState state = AppState.SPLASH;
 
     // ---------- Config ----------
     private static final float AU_TO_WORLD = 8f;               // 1 AU in world units
@@ -29,9 +42,11 @@ public class VibeUniverse extends ApplicationAdapter {
     private static final float MIN_TIME_SCALE = 0f;            // days / sec
     private static final float MAX_TIME_SCALE = 2000f;         // days / sec
     private static final float TIME_INC = 2f;                  // step when pressing [ or ]
+    private static final float MOON_CLEARANCE_GAP = 0.25f;     // extra world units so orbit doesn't touch planet
 
     // ---------- Rendering ----------
     private PerspectiveCamera camera;
+    private OrthographicCamera uiCam;
     private ModelBatch modelBatch;
     private Environment environment;
     private Model sunModel, planetModel, moonModel;
@@ -39,12 +54,31 @@ public class VibeUniverse extends ApplicationAdapter {
     private ShapeRenderer shapeRenderer;
     private SpriteBatch uiBatch;
     private BitmapFont font;
+    private BitmapFont titleFont; // slightly larger for splash/title
+    private GlyphLayout layout = new GlyphLayout();
+
+    // ---------- Camera control (orbit/pan/zoom) ----------
+    private final Vector3 camTarget = new Vector3(0, 0, 0);
+    private float camDistance = 26f;
+    private float camYawDeg = 0f;    // around Y
+    private float camPitchDeg = 20f; // up/down
+    private float zoomSpeed = 2f;
+    private float orbitSpeed = 0.3f; // degrees per pixel drag
+    private float panSpeed = 0.01f;  // world units per pixel
+
+    private final Vector2 lastMouse = new Vector2();
+    private boolean rightDragging = false;
+    private boolean middleDragging = false;
 
     // ---------- Simulation ----------
     private float simTimeDays = 0f;
     private float timeScaleDaysPerSec = 10f;                   // adjustable
     private boolean drawOrbits = true;
     private boolean paused = false;
+
+    // ---------- Moons rendering mode ----------
+    private enum MoonRenderMode { EXAGGERATED, REALISTIC, HIDDEN }
+    private MoonRenderMode moonMode = MoonRenderMode.EXAGGERATED;
 
     private final Array<Body> planets = new Array<>();
     private final Array<Moon> moons = new Array<>();
@@ -58,52 +92,65 @@ public class VibeUniverse extends ApplicationAdapter {
     }
     private final Array<PlanetInfo> feed = new Array<>();
 
+    // ---------- Splash UI ----------
+    private Rectangle startButton = new Rectangle();
+    private boolean startHovered = false;
+
     @Override
     public void create() {
         modelBatch = new ModelBatch();
         shapeRenderer = new ShapeRenderer();
         uiBatch = new SpriteBatch();
-        font = new BitmapFont();
+        font = new BitmapFont();       // default
+        titleFont = new BitmapFont();  // we’ll scale it up a bit
+        titleFont.getData().setScale(1.4f);
 
         camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
-        camera.position.set(0f, 12f, 26f);
-        camera.lookAt(0, 0, 0);
-        camera.near = 0.1f;
-        camera.far = 800f;
-        camera.update();
+        updateCameraTransform();
+
+        uiCam = new OrthographicCamera();
+        uiCam.setToOrtho(false, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        uiCam.update();
 
         environment = new Environment();
         environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.6f, 0.6f, 0.7f, 1f));
         environment.add(new DirectionalLight().set(1f, 1f, 0.95f, -1f, -0.8f, -0.2f));
 
         ModelBuilder builder = new ModelBuilder();
+        // Sun visual size
         sunModel = builder.createSphere(4f, 4f, 4f, 32, 32,
                 new Material(ColorAttribute.createDiffuse(new Color(1f, 0.85f, 0.4f, 1f))),
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+        sunInstance = new ModelInstance(sunModel);
 
-        planetModel = builder.createSphere(1.2f, 1.2f, 1.2f, 24, 24,
+        // Shared base models (we'll scale per-planet / per-moon)
+        planetModel = builder.createSphere(1f, 1f, 1f, 24, 24,
                 new Material(ColorAttribute.createDiffuse(new Color(0.7f, 0.8f, 1f, 1f))),
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
-
-        moonModel = builder.createSphere(0.5f, 0.5f, 0.5f, 18, 18,
+        moonModel = builder.createSphere(1f, 1f, 1f, 18, 18,
                 new Material(ColorAttribute.createDiffuse(new Color(0.8f, 0.8f, 0.85f, 1f))),
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
 
-        sunInstance = new ModelInstance(sunModel);
+        // --------- Planets (semi-major axis in AU, e, period days, color, radius_km) ---------
+        addPlanet("Mercury", 1, 0.387098f, 0.2056f, 87.969f,  new Color(0.7f,0.7f,0.7f,1f), 2440);
+        addPlanet("Venus",   2, 0.723332f, 0.0067f, 224.701f, new Color(1.0f,0.9f,0.7f,1f), 6052);
+        addPlanet("Earth",   3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f,0.7f,1f,1f),  6371);
+        addPlanet("Mars",    4, 1.523679f, 0.0934f, 686.971f, new Color(1f,0.5f,0.35f,1f),  3390);
+        addPlanet("Jupiter", 5, 5.2044f,   0.0489f, 4332.59f, new Color(0.9f,0.8f,0.6f,1f), 69911);
+        addPlanet("Saturn",  6, 9.5826f,   0.0565f,10759.22f, new Color(0.95f,0.9f,0.75f,1f), 58232);
+        addPlanet("Uranus",  7, 19.2184f,  0.046f, 30688.5f,  new Color(0.7f,0.9f,0.95f,1f), 25362);
+        addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f,0.7f,1f,1f),   24622);
 
-        // --------- Planets (semi-major axis in AU, e, period days) ---------
-        addPlanet("Mercury", 1, 0.387098f, 0.2056f, 87.969f, new Color(0.7f, 0.7f, 0.7f, 1f));
-        addPlanet("Venus",   2, 0.723332f, 0.0067f, 224.701f, new Color(1.0f, 0.9f, 0.7f, 1f));
-        addPlanet("Earth",   3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f, 0.7f, 1f, 1f));
-        addPlanet("Mars",    4, 1.523679f, 0.0934f, 686.971f, new Color(1f, 0.5f, 0.35f, 1f));
-        addPlanet("Jupiter", 5, 5.2044f,   0.0489f, 4332.59f, new Color(0.9f, 0.8f, 0.6f, 1f));
-        addPlanet("Saturn",  6, 9.5826f,   0.0565f, 10759.22f,new Color(0.95f, 0.9f, 0.75f, 1f));
-        addPlanet("Uranus",  7, 19.2184f,  0.046f,  30688.5f, new Color(0.7f, 0.9f, 0.95f, 1f));
-        addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f, 0.7f, 1f, 1f));
-
-        // Two moons (a couple): Earth's Moon and Mars' Phobos
-        addMoon("Moon",   "Earth", 0.00257f, 0.0549f, 27.3217f, new Color(0.85f, 0.85f, 0.9f, 1f));
-        addMoon("Phobos", "Mars",  0.0000627f, 0.0151f, 0.31891f, new Color(0.8f, 0.7f, 0.6f, 1f));
+        // Major moons (AU, e, period days) for a quick taste
+        addMoon("Moon",     "Earth",   0.00257f,   0.0549f, 27.3217f, new Color(0.85f,0.85f,0.9f,1f),   1737);
+        addMoon("Phobos",   "Mars",    0.0000627f, 0.0151f, 0.31891f, new Color(0.8f,0.7f,0.6f,1f),      11);
+        addMoon("Deimos",   "Mars",    0.0001568f, 0.0005f, 1.263f,   new Color(0.8f,0.75f,0.6f,1f),      6);
+        addMoon("Io",       "Jupiter", 0.002820f,  0.0041f, 1.769f,   new Color(0.95f,0.85f,0.5f,1f),  1821);
+        addMoon("Europa",   "Jupiter", 0.004490f,  0.009f,  3.551f,   new Color(0.85f,0.9f,0.95f,1f),  1560);
+        addMoon("Ganymede", "Jupiter", 0.007155f,  0.0013f, 7.155f,   new Color(0.8f,0.8f,0.8f,1f),    2634);
+        addMoon("Callisto", "Jupiter", 0.012585f,  0.007f, 16.689f,   new Color(0.75f,0.75f,0.75f,1f), 2410);
+        addMoon("Titan",    "Saturn",  0.008167f,  0.0288f,15.945f,   new Color(0.95f,0.8f,0.6f,1f),   2575);
+        addMoon("Enceladus","Saturn",  0.001588f,  0.0047f, 1.370f,   new Color(0.9f,0.95f,1.0f,1f),    252);
 
         // Data feed
         feed.addAll(
@@ -123,24 +170,166 @@ public class VibeUniverse extends ApplicationAdapter {
 
         Gdx.gl.glEnable(GL20.GL_DEPTH_TEST);
         Gdx.gl.glDepthFunc(GL20.GL_LEQUAL);
+
+        Gdx.input.setInputProcessor(new InputAdapter(){
+            @Override public boolean scrolled(float amountX, float amountY) {
+                if (state != AppState.SIM) return false;
+                camDistance += amountY * zoomSpeed;
+                camDistance = MathUtils.clamp(camDistance, 6f, 400f);
+                updateCameraTransform();
+                return true;
+            }
+            @Override public boolean touchDown (int screenX, int screenY, int pointer, int button) {
+                if (state == AppState.SPLASH && button == Input.Buttons.LEFT) {
+                    // Convert y
+                    float y = uiCam.viewportHeight - screenY;
+                    if (startButton.contains(screenX, y)) {
+                        startSimulation();
+                        return true;
+                    }
+                }
+                lastMouse.set(screenX, screenY);
+                if (button == Input.Buttons.RIGHT) rightDragging = true;
+                if (button == Input.Buttons.MIDDLE) middleDragging = true;
+                return true;
+            }
+            @Override public boolean mouseMoved (int screenX, int screenY) {
+                if (state == AppState.SPLASH) {
+                    float y = uiCam.viewportHeight - screenY;
+                    startHovered = startButton.contains(screenX, y);
+                }
+                return false;
+            }
+            @Override public boolean touchDragged (int screenX, int screenY, int pointer) {
+                if (state != AppState.SIM) return false;
+                float dx = screenX - lastMouse.x;
+                float dy = screenY - lastMouse.y;
+                lastMouse.set(screenX, screenY);
+                if (rightDragging) {
+                    camYawDeg   -= dx * orbitSpeed;
+                    camPitchDeg -= dy * orbitSpeed;
+                    camPitchDeg = MathUtils.clamp(camPitchDeg, -85f, 85f);
+                    updateCameraTransform();
+                } else if (middleDragging) {
+                    Vector3 right = new Vector3();
+                    Vector3 up = new Vector3(0,1,0);
+                    Vector3 forward = new Vector3();
+                    getCameraBasis(right, up, forward);
+                    camTarget.mulAdd(right, -dx * panSpeed * camDistance * 0.05f);
+                    camTarget.mulAdd(up,    dy * panSpeed * camDistance * 0.05f);
+                    updateCameraTransform();
+                }
+                return true;
+            }
+            @Override public boolean touchUp (int screenX, int screenY, int pointer, int button) {
+                if (button == Input.Buttons.RIGHT) rightDragging = false;
+                if (button == Input.Buttons.MIDDLE) middleDragging = false;
+                return true;
+            }
+            @Override public boolean keyDown (int keycode) {
+                if (state == AppState.SPLASH) {
+                    if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
+                        startSimulation();
+                        return true;
+                    }
+                    return false;
+                }
+                // SIM controls
+                if (keycode == Input.Keys.M) {
+                    switch (moonMode) {
+                        case EXAGGERATED: moonMode = MoonRenderMode.REALISTIC; break;
+                        case REALISTIC:   moonMode = MoonRenderMode.HIDDEN;    break;
+                        case HIDDEN:      moonMode = MoonRenderMode.EXAGGERATED; break;
+                    }
+                    applyMoonMode();
+                    return true;
+                } else if (keycode == Input.Keys.R &&
+                        (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))) {
+                    // Shift+R: reset camera
+                    camTarget.set(0,0,0);
+                    camDistance = 26f;
+                    camYawDeg = 0f;
+                    camPitchDeg = 20f;
+                    updateCameraTransform();
+                    return true;
+                }
+                return false;
+            }
+        });
+
+        // Apply initial moon mode
+        applyMoonMode();
+        updateStartButton();
     }
 
-    private void addPlanet(String name, int index, float aAU, float e, float periodDays, Color color) {
-        Body p = new Body(name, index, aAU, e, periodDays, color, planetModel);
+    private void startSimulation() {
+        state = AppState.SIM;
+        // optional: reset time so motion starts fresh
+        simTimeDays = 0f;
+    }
+
+    private void updateStartButton() {
+        float w = uiCam.viewportWidth;
+        float h = uiCam.viewportHeight;
+        float btnW = 280f;
+        float btnH = 56f;
+        startButton.set((w - btnW) / 2f, h * 0.35f, btnW, btnH);
+    }
+
+    private void applyMoonMode() {
+        for (Moon m : moons) {
+            if (moonMode == MoonRenderMode.HIDDEN) {
+                m.visible = false;
+            } else {
+                m.visible = true;
+                float scale = (moonMode == MoonRenderMode.EXAGGERATED) ? m.exaggeratedScale : m.realisticScale;
+                m.setScaleAndRecompute(scale);
+            }
+        }
+    }
+
+    // Planet size mapping: cube-root scaling so sizes are readable
+    private float planetVisualRadius(float radiusKm) {
+        double earth = Math.cbrt(6371.0);
+        double r = Math.cbrt(radiusKm);
+        return (float)(1.2 * (r / earth)); // Earth ~1.2 units
+    }
+    private float moonVisualRadiusExaggerated(float radiusKm) {
+        double moon = Math.cbrt(1737.0);
+        double r = Math.cbrt(radiusKm);
+        return (float)(0.8 * (r / moon)); // Bigger to be more visible
+    }
+    private float moonVisualRadiusRealistic(float radiusKm) {
+        double moon = Math.cbrt(1737.0);
+        double r = Math.cbrt(radiusKm);
+        return (float)(0.35 * (r / moon)); // Smaller, closer to planet scale
+    }
+
+    private void addPlanet(String name, int index, float aAU, float e, float periodDays, Color color, int radiusKm) {
+        float vis = planetVisualRadius(radiusKm);
+        Body p = new Body(name, index, aAU, e, periodDays, color, planetModel, vis);
         planets.add(p);
     }
 
-    private void addMoon(String name, String parentName, float aAU, float e, float periodDays, Color color) {
+    private void addMoon(String name, String parentName, float aAU, float e, float periodDays, Color color, int radiusKm) {
         Body parent = null;
         for (Body p : planets) if (p.name.equals(parentName)) { parent = p; break; }
         if (parent == null) return;
-        Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel);
+        float visEx = moonVisualRadiusExaggerated(radiusKm);
+        float visReal = moonVisualRadiusRealistic(radiusKm);
+        Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel, visEx, visReal);
         moons.add(m);
     }
 
     @Override
     public void render() {
-        // Controls
+        // Splash branch
+        if (state == AppState.SPLASH) {
+            renderSplash();
+            return;
+        }
+
+        // Controls (SIM only)
         if (Gdx.input.isKeyJustPressed(Input.Keys.SPACE)) paused = !paused;
         if (Gdx.input.isKeyJustPressed(Input.Keys.O)) drawOrbits = !drawOrbits;
         if (Gdx.input.isKeyJustPressed(Input.Keys.R)) simTimeDays = 0f;
@@ -159,13 +348,13 @@ public class VibeUniverse extends ApplicationAdapter {
 
         // Update positions
         for (Body p : planets) p.updatePosition(simTimeDays);
-        for (Moon m : moons) m.updatePosition(simTimeDays);
+        for (Moon m : moons) if (m.visible) m.updatePosition(simTimeDays);
 
         // 3D models
         modelBatch.begin(camera);
         modelBatch.render(sunInstance, environment);
         for (Body p : planets) modelBatch.render(p.instance, environment);
-        for (Moon m : moons) modelBatch.render(m.instance, environment);
+        for (Moon m : moons) if (m.visible) modelBatch.render(m.instance, environment);
         modelBatch.end();
 
         // Orbit rings
@@ -174,21 +363,94 @@ public class VibeUniverse extends ApplicationAdapter {
             shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
             Gdx.gl.glLineWidth(1f);
             for (Body p : planets) p.drawOrbit(shapeRenderer);
-            for (Moon m : moons) m.drawOrbit(shapeRenderer);
+            for (Moon m : moons) if (m.visible) m.drawOrbit(shapeRenderer);
             shapeRenderer.end();
         }
 
-        // UI
+        // UI (orthographic, so it persists in fullscreen)
+        uiCam.update();
+        uiBatch.setProjectionMatrix(uiCam.combined);
         uiBatch.begin();
-        float x = 12f, y = Gdx.graphics.getHeight() - 12f;
+        float x = 12f, y = uiCam.viewportHeight - 12f;
         font.draw(uiBatch, "Vibe Universe — Data Feed", x, y);
         y -= 18f;
         for (PlanetInfo pi : feed) { font.draw(uiBatch, "#" + pi.index + "  " + pi.name + " — " + String.format("%.3f d", pi.periodDays), x, y); y -= 16f; }
-
         y -= 8f;
         font.draw(uiBatch, String.format("Sim time: %.1f days", simTimeDays), x, y); y -= 16f;
         font.draw(uiBatch, String.format("Time scale: %.1f days/sec  [%s]", timeScaleDaysPerSec, paused ? "PAUSED" : "RUNNING"), x, y); y -= 16f;
-        font.draw(uiBatch, "Controls: Space=Pause, [ / ]=Slower/Faster, O=Toggle Orbits, R=Reset Time", x, y);
+        font.draw(uiBatch, "Controls: Wheel=Zoom, RMB drag=Orbit, MMB drag=Pan, Space=Pause, [ / ]=Slower/Faster, O=Toggle Orbits, R=Reset Time, Shift+R=Reset Camera, M=Moons Mode", x, y);
+        uiBatch.end();
+    }
+
+    private void renderSplash() {
+        ScreenUtils.clear(0.03f, 0.03f, 0.06f, 1);
+
+        // Simple starfield dots (just for a little vibe)
+        shapeRenderer.setProjectionMatrix(uiCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Point);
+        // Gdx.gl.glPointSize(1f);
+        int stars = 300;
+        for (int i = 0; i < stars; i++) {
+            float sx = MathUtils.random(0f, uiCam.viewportWidth);
+            float sy = MathUtils.random(0f, uiCam.viewportHeight);
+            shapeRenderer.point(sx, sy, 0);
+        }
+        shapeRenderer.end();
+
+        // Title + subtitle + button
+        uiBatch.setProjectionMatrix(uiCam.combined);
+        uiBatch.begin();
+
+        String title = "Vibe Universe";
+        layout.setText(titleFont, title);
+        float tx = (uiCam.viewportWidth - layout.width) / 2f;
+        float ty = uiCam.viewportHeight * 0.68f;
+        titleFont.setColor(1f, 0.95f, 0.8f, 1f);
+        titleFont.draw(uiBatch, layout, tx, ty);
+
+        String subtitle = "A tiny solar-system sandbox in Java + libGDX";
+        layout.setText(font, subtitle);
+        float sx = (uiCam.viewportWidth - layout.width) / 2f;
+        float sy = ty - 28f;
+        font.setColor(0.85f, 0.88f, 1f, 1f);
+        font.draw(uiBatch, layout, sx, sy);
+
+        // Button label
+        String btnLabel = "Enter Simulator";
+        layout.setText(font, btnLabel);
+        float labelX = startButton.x + (startButton.width - layout.width)/2f;
+        float labelY = startButton.y + (startButton.height + layout.height)/2f;
+
+        uiBatch.end();
+
+        // Button background (2D)
+        shapeRenderer.setProjectionMatrix(uiCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        Color base = startHovered ? new Color(0.2f, 0.45f, 0.8f, 1f) : new Color(0.15f, 0.35f, 0.65f, 1f);
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+
+        shapeRenderer.setColor(new Color(base.r, base.g, base.b, 0.85f));
+        shapeRenderer.rect(startButton.x, startButton.y, startButton.width, startButton.height);
+        shapeRenderer.end();
+
+        // Button outline
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        shapeRenderer.setColor(0.95f, 0.98f, 1f, 1f);
+        shapeRenderer.rect(startButton.x, startButton.y, startButton.width, startButton.height);
+        shapeRenderer.end();
+
+        // Draw button text after shapes
+        uiBatch.begin();
+        font.setColor(1f, 1f, 1f, 1f);
+        font.draw(uiBatch, btnLabel, labelX, labelY);
+
+        // Hints
+        String hint1 = "Click the button or press Enter / Space";
+        layout.setText(font, hint1);
+        font.setColor(0.8f, 0.85f, 0.95f, 1f);
+        font.draw(uiBatch, layout, (uiCam.viewportWidth - layout.width)/2f, startButton.y - 14f);
+
         uiBatch.end();
     }
 
@@ -197,6 +459,11 @@ public class VibeUniverse extends ApplicationAdapter {
         camera.viewportWidth = width;
         camera.viewportHeight = height;
         camera.update();
+
+        uiCam.setToOrtho(false, width, height);
+        uiCam.update();
+
+        updateStartButton();
     }
 
     @Override
@@ -205,6 +472,7 @@ public class VibeUniverse extends ApplicationAdapter {
         shapeRenderer.dispose();
         uiBatch.dispose();
         font.dispose();
+        titleFont.dispose();
         if (sunModel != null) sunModel.dispose();
         if (planetModel != null) planetModel.dispose();
         if (moonModel != null) moonModel.dispose();
@@ -220,14 +488,15 @@ public class VibeUniverse extends ApplicationAdapter {
         final float periodDays;  // sidereal period (days)
         final Color color;
 
-        final float aWorld;      // world units
-        final float bWorld;      // world units
+        final float aWorld;      // world units (base/original)
+        final float bWorld;      // world units (base/original)
 
         final ModelInstance instance;
         final Array<Vector3> orbitPoints = new Array<>(ORBIT_SEGMENTS + 1);
         final Vector3 position = new Vector3();
+        final float visualScale; // current visual radius (units)
 
-        Body(String name, int index, float aAU, float e, float periodDays, Color color, Model sharedModel) {
+        Body(String name, int index, float aAU, float e, float periodDays, Color color, Model sharedModel, float visualRadius) {
             this.name = name;
             this.index = index;
             this.aAU = aAU;
@@ -239,18 +508,24 @@ public class VibeUniverse extends ApplicationAdapter {
             this.bWorld = aWorld * (float)Math.sqrt(1.0 - (e * e));
 
             this.instance = new ModelInstance(sharedModel);
+            this.instance.transform.setToScaling(visualRadius, visualRadius, visualRadius);
+            this.visualScale = visualRadius;
             for (Material m : instance.materials) {
                 m.set(ColorAttribute.createDiffuse(this.color));
             }
         }
 
         void initOrbit() {
+            buildOrbitPolyline(aWorld, bWorld, e);
+        }
+
+        void buildOrbitPolyline(float a, float b, float ecc) {
             orbitPoints.clear();
             for (int i = 0; i <= ORBIT_SEGMENTS; i++) {
                 float t = (float)i / (float)ORBIT_SEGMENTS;
                 float E = t * MathUtils.PI2;
-                float x = aWorld * (MathUtils.cos(E) - e);
-                float z = bWorld * MathUtils.sin(E);
+                float x = a * (MathUtils.cos(E) - ecc);
+                float z = b * MathUtils.sin(E);
                 orbitPoints.add(new Vector3(x, 0f, z));
             }
         }
@@ -263,7 +538,10 @@ public class VibeUniverse extends ApplicationAdapter {
             float x = aWorld * (MathUtils.cos(E) - e);
             float z = bWorld * MathUtils.sin(E);
             position.set(x, 0f, z);
-            instance.transform.setToTranslation(position);
+            Vector3 scale = new Vector3();
+            instance.transform.getScale(scale);
+            instance.transform.setToScaling(scale);
+            instance.transform.setTranslation(position);
         }
 
         void drawOrbit(ShapeRenderer sr) {
@@ -289,10 +567,37 @@ public class VibeUniverse extends ApplicationAdapter {
 
     private static class Moon extends Body {
         final Body parent;
+        boolean visible = true;
+        final float exaggeratedScale;
+        final float realisticScale;
 
-        Moon(String name, Body parent, float aAU, float e, float periodDays, Color color, Model sharedModel) {
-            super(name, 0, aAU, e, periodDays, color, sharedModel);
+        // Effective (display) orbit parameters adjusted to clear parent
+        private float aEff, bEff;
+
+        Moon(String name, Body parent, float aAU, float e, float periodDays, Color color, Model sharedModel, float exaggeratedScale, float realisticScale) {
+            super(name, 0, aAU, e, periodDays, color, sharedModel, exaggeratedScale);
             this.parent = parent;
+            this.exaggeratedScale = exaggeratedScale;
+            this.realisticScale = realisticScale;
+            setScaleAndRecompute(exaggeratedScale);
+        }
+
+        void setScaleAndRecompute(float scale) {
+            // Apply scaling while keeping translation
+            Vector3 pos = new Vector3();
+            instance.transform.getTranslation(pos);
+            instance.transform.setToScaling(scale, scale, scale);
+            instance.transform.setTranslation(pos);
+
+            // Clearance: orbit stays outside planet+moon visual spheres + gap
+            float clearance = parent.visualScale + scale + MOON_CLEARANCE_GAP; // world units
+            float aBase = this.aWorld;
+            float aNeeded = clearance / Math.max(0.0001f, (1f - this.e)); // ensure periapsis >= clearance
+            this.aEff = Math.max(aBase, aNeeded);
+            this.bEff = aEff * (float)Math.sqrt(1.0 - (this.e * this.e));
+
+            // Rebuild orbit polyline around the parent
+            buildOrbitPolyline(aEff, bEff, this.e);
         }
 
         @Override
@@ -312,10 +617,42 @@ public class VibeUniverse extends ApplicationAdapter {
             float M = n * simDays;
             M = (float)Math.atan2(Math.sin(M), Math.cos(M));
             float E = keplerSolve(M, e);
-            float x = aWorld * (MathUtils.cos(E) - e);
-            float z = bWorld * MathUtils.sin(E);
+            float x = aEff * (MathUtils.cos(E) - e);
+            float z = bEff * MathUtils.sin(E);
             position.set(parent.position.x + x, 0f, parent.position.z + z);
-            instance.transform.setToTranslation(position);
+            Vector3 scale = new Vector3();
+            instance.transform.getScale(scale);
+            instance.transform.setToScaling(scale);
+            instance.transform.setTranslation(position);
         }
+    }
+
+    // ---------- Camera math helpers ----------
+    private void updateCameraTransform() {
+        float yawRad = camYawDeg * MathUtils.degreesToRadians;
+        float pitchRad = camPitchDeg * MathUtils.degreesToRadians;
+        float cx = camTarget.x + camDistance * MathUtils.cos(pitchRad) * MathUtils.cos(yawRad);
+        float cz = camTarget.z + camDistance * MathUtils.cos(pitchRad) * MathUtils.sin(yawRad);
+        float cy = camTarget.y + camDistance * MathUtils.sin(pitchRad);
+
+        if (camera == null) {
+            camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        }
+        camera.position.set(cx, cy, cz);
+        camera.lookAt(camTarget);
+        camera.near = 0.1f;
+        camera.far = 4000f;
+        camera.update();
+    }
+
+    private void getCameraBasis(Vector3 outRight, Vector3 outUp, Vector3 outForward) {
+        float yawRad = camYawDeg * MathUtils.degreesToRadians;
+        float pitchRad = camPitchDeg * MathUtils.degreesToRadians;
+
+        outForward.set(-MathUtils.cos(pitchRad) * MathUtils.cos(yawRad),
+                -MathUtils.sin(pitchRad),
+                -MathUtils.cos(pitchRad) * MathUtils.sin(yawRad)).nor();
+        outRight.set(outForward.z, 0, -outForward.x).nor();
+        outUp.set(outRight).crs(outForward).nor();
     }
 }
