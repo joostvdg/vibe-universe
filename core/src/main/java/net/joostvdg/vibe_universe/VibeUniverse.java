@@ -44,6 +44,21 @@ public class VibeUniverse extends ApplicationAdapter {
     private static final float TIME_INC = 2f;                  // step when pressing [ or ]
     private static final float MOON_CLEARANCE_GAP = 0.40f;     // extra world units so orbit doesn't touch planet
 
+    // --- Orbit inclinations (deg, relative to ecliptic) ---
+    private static final float INC_MERCURY = 7.0f;
+    private static final float INC_VENUS   = 3.39f;
+    private static final float INC_EARTH   = 0.0f;
+    private static final float INC_MARS    = 1.85f;
+    private static final float INC_JUPITER = 1.304f;
+    private static final float INC_SATURN  = 2.485f;
+    private static final float INC_URANUS  = 0.773f;
+    private static final float INC_NEPTUNE = 1.769f;
+
+    // --- Compressed distance mode ---
+    private boolean compressDistances = false;  // toggle with 'C'
+    private float compressGamma = 0.6f;         // 1.0 = off; lower compresses more
+
+
     // ---------- Rendering ----------
     private PerspectiveCamera camera;
     private OrthographicCamera uiCam;
@@ -145,25 +160,33 @@ public class VibeUniverse extends ApplicationAdapter {
                 VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
 
         // --------- Planets (semi-major axis in AU, e, period days, color, radius_km) ---------
-        addPlanet("Mercury", 1, 0.387098f, 0.2056f, 87.969f,  new Color(0.7f,0.7f,0.7f,1f), 2440);
-        addPlanet("Venus",   2, 0.723332f, 0.0067f, 224.701f, new Color(1.0f,0.9f,0.7f,1f), 6052);
-        addPlanet("Earth",   3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f,0.7f,1f,1f),  6371);
-        addPlanet("Mars",    4, 1.523679f, 0.0934f, 686.971f, new Color(1f,0.5f,0.35f,1f),  3390);
-        addPlanet("Jupiter", 5, 5.2044f,   0.0489f, 4332.59f, new Color(0.9f,0.8f,0.6f,1f), 69911);
-        addPlanet("Saturn",  6, 9.5826f,   0.0565f,10759.22f, new Color(0.95f,0.9f,0.75f,1f), 58232);
-        addPlanet("Uranus",  7, 19.2184f,  0.046f, 30688.5f,  new Color(0.7f,0.9f,0.95f,1f), 25362);
-        addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f,0.7f,1f,1f),   24622);
+        addPlanet("Mercury", 1, 0.387098f, 0.2056f,  87.969f,  new Color(0.7f,0.7f,0.7f,1f), 2440, INC_MERCURY);
+        addPlanet("Venus",   2, 0.723332f, 0.0067f, 224.701f, new Color(1.0f,0.9f,0.7f,1f), 6052, INC_VENUS);
+        addPlanet("Earth",   3, 1.000000f, 0.0167f, 365.256f, new Color(0.45f,0.7f,1f,1f),  6371, INC_EARTH);
+        addPlanet("Mars",    4, 1.523679f, 0.0934f, 686.971f, new Color(1f,0.5f,0.35f,1f),  3390, INC_MARS);
+        addPlanet("Jupiter", 5, 5.2044f,   0.0489f, 4332.59f, new Color(0.9f,0.8f,0.6f,1f), 69911, INC_JUPITER);
+        addPlanet("Saturn",  6, 9.5826f,   0.0565f,10759.22f, new Color(0.95f,0.9f,0.75f,1f), 58232, INC_SATURN);
+        addPlanet("Uranus",  7, 19.2184f,  0.046f, 30688.5f,  new Color(0.7f,0.9f,0.95f,1f), 25362, INC_URANUS);
+        addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f,0.7f,1f,1f),   24622, INC_NEPTUNE);
+
 
         // Major moons (AU, e, period days) for a quick taste
-        addMoon("Moon",     "Earth",   0.00257f,   0.0549f, 27.3217f, new Color(0.85f,0.85f,0.9f,1f),   1737);
-        addMoon("Phobos",   "Mars",    0.0000627f, 0.0151f, 0.31891f, new Color(0.8f,0.7f,0.6f,1f),      11);
-        addMoon("Deimos",   "Mars",    0.0001568f, 0.0005f, 1.263f,   new Color(0.8f,0.75f,0.6f,1f),      6);
-        addMoon("Io",       "Jupiter", 0.002820f,  0.0041f, 1.769f,   new Color(0.95f,0.85f,0.5f,1f),  1821);
-        addMoon("Europa",   "Jupiter", 0.004490f,  0.009f,  3.551f,   new Color(0.85f,0.9f,0.95f,1f),  1560);
-        addMoon("Ganymede", "Jupiter", 0.007155f,  0.0013f, 7.155f,   new Color(0.8f,0.8f,0.8f,1f),    2634);
-        addMoon("Callisto", "Jupiter", 0.012585f,  0.007f, 16.689f,   new Color(0.75f,0.75f,0.75f,1f), 2410);
-        addMoon("Titan",    "Saturn",  0.008167f,  0.0288f,15.945f,   new Color(0.95f,0.8f,0.6f,1f),   2575);
-        addMoon("Enceladus","Saturn",  0.001588f,  0.0047f, 1.370f,   new Color(0.9f,0.95f,1.0f,1f),    252);
+        addMoon("Moon",     "Earth",   0.00257f,   0.0549f, 27.3217f, new Color(0.85f,0.85f,0.9f,1f),   1737, 5.145f);
+        addMoon("Phobos",   "Mars",    0.0000627f, 0.0151f, 0.31891f, new Color(0.8f,0.7f,0.6f,1f),      11,   1.08f);
+        addMoon("Deimos",   "Mars",    0.0001568f, 0.0005f, 1.263f,   new Color(0.8f,0.75f,0.6f,1f),      6,   1.79f);
+
+        addMoon("Io",       "Jupiter", 0.002820f,  0.0041f, 1.769f,   new Color(0.95f,0.85f,0.5f,1f),  1821, 0.05f);
+        addMoon("Europa",   "Jupiter", 0.004490f,  0.009f,  3.551f,   new Color(0.85f,0.9f,0.95f,1f),  1560, 0.47f);
+        addMoon("Ganymede", "Jupiter", 0.007155f,  0.0013f, 7.155f,   new Color(0.8f,0.8f,0.8f,1f),    2634, 0.20f);
+        addMoon("Callisto", "Jupiter", 0.012585f,  0.007f, 16.689f,   new Color(0.75f,0.75f,0.75f,1f), 2410, 0.28f);
+
+        addMoon("Titan",    "Saturn",  0.008167f,  0.0288f, 15.945f,  new Color(0.95f,0.8f,0.6f,1f),   2575, 0.35f);
+        addMoon("Enceladus","Saturn",  0.001588f,  0.0047f, 1.370f,   new Color(0.9f,0.95f,1.0f,1f),    252, 0.01f);
+
+
+        for (Body p : planets) p.initOrbit();
+        for (Moon m : moons)  m.initOrbit(); // moons keep their existing method (see note below)
+
 
         // Data feed
         feed.addAll(
@@ -266,7 +289,19 @@ public class VibeUniverse extends ApplicationAdapter {
                         (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))) {
                     resetCamera();
                     return true;
+                } // In keyDown(...) when state == SIM:
+                else if (keycode == Input.Keys.C) {
+                    compressDistances = !compressDistances;
+                    // Rebuild polyline orbits so rings reflect the new scale
+                    for (Body p : planets) p.rebuildOrbitPolyline();
+                    // Moons: leave as-is (they’re scaled by their own AU already)
+                    return true;
+                } else if (keycode >= Input.Keys.NUM_1 && keycode <= Input.Keys.NUM_8) {
+                    int idx = keycode - Input.Keys.NUM_0; // NUM_1..NUM_8 → 1..8
+                    focusOnPlanetIndex(idx);
+                    return true;
                 }
+
                 return false;
             }
         });
@@ -275,6 +310,20 @@ public class VibeUniverse extends ApplicationAdapter {
         applyMoonMode();
         updateMenuButtons();
     }
+
+    private void focusOnPlanetIndex(int idx1to8) {
+        for (Body p : planets) {
+            if (p.index == idx1to8) {
+                // Move camera target to planet; keep yaw/pitch; adjust distance for a nice framing
+                camTarget.set(p.position);
+                // heuristic distance: a bit bigger than the planet's visual radius
+                camDistance = Math.max(8f, p.visualScale * 6f);
+                updateCameraTransform();
+                break;
+            }
+        }
+    }
+
 
     private void startSimulation() {
         state = AppState.SIM;
@@ -344,21 +393,31 @@ public class VibeUniverse extends ApplicationAdapter {
         return (float)(0.35 * (r / moon)); // Smaller, closer to planet scale
     }
 
-    private void addPlanet(String name, int index, float aAU, float e, float periodDays, Color color, int radiusKm) {
+    private void addPlanet(String name, int index, float aAU, float e, float periodDays,
+                           Color color, int radiusKm, float inclinationDeg) {
         float vis = planetVisualRadius(radiusKm);
-        Body p = new Body(name, index, aAU, e, periodDays, color, planetModel, vis);
+        Body p = new Body(name, index, aAU, e, periodDays, color, planetModel, vis, inclinationDeg);
         planets.add(p);
     }
 
-    private void addMoon(String name, String parentName, float aAU, float e, float periodDays, Color color, int radiusKm) {
+
+    private void addMoon(String name, String parentName,
+                         float aAU, float e, float periodDays,
+                         Color color, int radiusKm,
+                         float inclinationDeg) {
         Body parent = null;
-        for (Body p : planets) if (p.name.equals(parentName)) { parent = p; break; }
+        for (Body p : planets) {
+            if (p.name.equals(parentName)) { parent = p; break; }
+        }
         if (parent == null) return;
-        float visEx = moonVisualRadiusExaggerated(radiusKm);
-        float visReal = moonVisualRadiusRealistic(radiusKm);
-        Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel, visEx, visReal);
+
+        float visEx  = moonVisualRadiusExaggerated(radiusKm);
+        float visReal= moonVisualRadiusRealistic(radiusKm);
+        Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel,
+                visEx, visReal, inclinationDeg);
         moons.add(m);
     }
+
 
     @Override
     public void render() {
@@ -417,7 +476,9 @@ public class VibeUniverse extends ApplicationAdapter {
         y -= 8f;
         font.draw(uiBatch, String.format("Sim time: %.1f days", simTimeDays), x, y); y -= 16f;
         font.draw(uiBatch, String.format("Time scale: %.1f days/sec  [%s]", timeScaleDaysPerSec, paused ? "PAUSED" : "RUNNING"), x, y); y -= 16f;
-        font.draw(uiBatch, "Controls: Wheel=Zoom, RMB drag=Orbit, MMB drag=Pan, Space=Pause, [ / ]=Slower/Faster, O=Toggle Orbits, R=Reset Time, Shift+R=Reset Camera, M=Moons Mode", x, y);
+        font.draw(uiBatch, "Controls: Wheel=Zoom, RMB drag=Orbit, MMB drag=Pan, Space=Pause, [ / ]=Slower/Faster, O=Toggle Orbits, R=Reset Time, Shift+R=Reset Camera", x, y);
+        font.draw(uiBatch, "Keys: 1–8 Focus planet | C Toggle compressed distances | M Moons | O Orbits ", x, y);
+        //          x, y);
         uiBatch.end();
     }
 
@@ -544,14 +605,20 @@ public class VibeUniverse extends ApplicationAdapter {
         final Array<Vector3> orbitPoints = new Array<>(ORBIT_SEGMENTS + 1);
         final Vector3 position = new Vector3();
         final float visualScale; // current visual radius (units)
+        final float inclinationDeg; // tilt of the orbital plane
 
-        Body(String name, int index, float aAU, float e, float periodDays, Color color, Model sharedModel, float visualRadius) {
+        private static boolean compressDistances = false;
+        private static float compressGamma = 0.6f;
+
+        Body(String name, int index, float aAU, float e, float periodDays, Color color,
+             Model sharedModel, float visualRadius, float inclinationDeg) {
             this.name = name;
             this.index = index;
             this.aAU = aAU;
             this.e = e;
             this.periodDays = periodDays;
             this.color = new Color(color);
+            this.inclinationDeg = inclinationDeg;
 
             this.aWorld = aAU * AU_TO_WORLD;
             this.bWorld = aWorld * (float)Math.sqrt(1.0 - (e * e));
@@ -565,7 +632,41 @@ public class VibeUniverse extends ApplicationAdapter {
         }
 
         void initOrbit() {
-            buildOrbitPolyline(aWorld, bWorld, e);
+            // buildOrbitPolyline(aWorld, bWorld, e);
+            rebuildOrbitPolyline();
+        }
+
+        private float currentAWorld() {
+            // Use global compression flag/gamma from outer class
+            float aAUeff = compressDistances ? (float)Math.pow(aAU, compressGamma) : aAU;
+            return aAUeff * AU_TO_WORLD;
+        }
+
+        private float currentBWorld() {
+            float a = currentAWorld();
+            return a * (float)Math.sqrt(1f - e*e);
+        }
+
+        void rebuildOrbitPolyline() {
+            float a = currentAWorld();
+            float b = currentBWorld();
+            orbitPoints.clear();
+            float inc = inclinationDeg * MathUtils.degreesToRadians;
+            float cosI = MathUtils.cos(inc);
+            float sinI = MathUtils.sin(inc);
+
+            for (int i = 0; i <= ORBIT_SEGMENTS; i++) {
+                float t = (float)i / (float)ORBIT_SEGMENTS;
+                float E = t * MathUtils.PI2;
+                float x = a * (MathUtils.cos(E) - e);
+                float z0 = b * MathUtils.sin(E);
+
+                // rotate around X by +inclination: (y,z) = (z0*sinI, z0*cosI)
+                float y = z0 * sinI;
+                float z = z0 * cosI;
+
+                orbitPoints.add(new Vector3(x, y, z));
+            }
         }
 
         void buildOrbitPolyline(float a, float b, float ecc) {
@@ -584,14 +685,25 @@ public class VibeUniverse extends ApplicationAdapter {
             float M = n * simDays;
             M = (float)Math.atan2(Math.sin(M), Math.cos(M));
             float E = keplerSolve(M, e);
-            float x = aWorld * (MathUtils.cos(E) - e);
-            float z = bWorld * MathUtils.sin(E);
-            position.set(x, 0f, z);
+
+            float a = currentAWorld();
+            float b = currentBWorld();
+
+            float x = a * (MathUtils.cos(E) - e);
+            float z0 = b * MathUtils.sin(E);
+
+            float inc = inclinationDeg * MathUtils.degreesToRadians;
+            float y = z0 * MathUtils.sin(inc);
+            float z = z0 * MathUtils.cos(inc);
+
+            position.set(x, y, z);
+
             Vector3 scale = new Vector3();
             instance.transform.getScale(scale);
             instance.transform.setToScaling(scale);
             instance.transform.setTranslation(position);
         }
+
 
         void drawOrbit(ShapeRenderer sr) {
             for (int i = 0; i < orbitPoints.size - 1; i++) {
@@ -623,8 +735,14 @@ public class VibeUniverse extends ApplicationAdapter {
         // Effective (display) orbit parameters adjusted to clear parent
         private float aEff, bEff;
 
-        Moon(String name, Body parent, float aAU, float e, float periodDays, Color color, Model sharedModel, float exaggeratedScale, float realisticScale) {
-            super(name, 0, aAU, e, periodDays, color, sharedModel, exaggeratedScale);
+        Moon(String name,
+             Body parent,
+             float aAU, float e, float periodDays,
+             Color color, Model sharedModel,
+             float exaggeratedScale, float realisticScale,
+             float inclinationDeg) {
+            // Note: pass inclinationDeg up to Body
+            super(name, 0, aAU, e, periodDays, color, sharedModel, exaggeratedScale, inclinationDeg);
             this.parent = parent;
             this.exaggeratedScale = exaggeratedScale;
             this.realisticScale = realisticScale;
@@ -632,21 +750,41 @@ public class VibeUniverse extends ApplicationAdapter {
         }
 
         void setScaleAndRecompute(float scale) {
-            // Apply scaling while keeping translation
+            // Apply visual scale while keeping translation
             Vector3 pos = new Vector3();
             instance.transform.getTranslation(pos);
             instance.transform.setToScaling(scale, scale, scale);
             instance.transform.setTranslation(pos);
 
-            // Clearance: orbit stays outside planet+moon visual spheres + gap
+            // Ensure the moon’s periapsis clears planet sphere + moon sphere + gap
             float clearance = parent.visualScale + scale + MOON_CLEARANCE_GAP; // world units
-            float aBase = this.aWorld;
-            float aNeeded = clearance / Math.max(0.0001f, (1f - this.e)); // ensure periapsis >= clearance
-            this.aEff = Math.max(aBase, aNeeded);
-            this.bEff = aEff * (float)Math.sqrt(1.0 - (this.e * this.e));
+            float aBase     = aAU * AU_TO_WORLD; // moons use their own AU scale (uncompressed)
+            float aNeeded   = clearance / Math.max(0.0001f, (1f - this.e));
+            this.aEff       = Math.max(aBase, aNeeded);
+            this.bEff       = aEff * (float)Math.sqrt(1f - e*e);
 
-            // Rebuild orbit polyline around the parent
-            buildOrbitPolyline(aEff, bEff, this.e);
+            // Rebuild the polyline with inclination (just like Body, but using aEff/bEff)
+            rebuildMoonOrbitPolyline();
+        }
+
+        private void rebuildMoonOrbitPolyline() {
+            orbitPoints.clear();
+            float inc  = inclinationDeg * MathUtils.degreesToRadians;
+            float cosI = MathUtils.cos(inc);
+            float sinI = MathUtils.sin(inc);
+
+            for (int i = 0; i <= ORBIT_SEGMENTS; i++) {
+                float t  = (float)i / (float)ORBIT_SEGMENTS;
+                float E  = t * MathUtils.PI2;
+                float x  = aEff * (MathUtils.cos(E) - e);
+                float z0 = bEff * MathUtils.sin(E);
+
+                // rotate around X by +inclination
+                float y = z0 * sinI;
+                float z = z0 * cosI;
+
+                orbitPoints.add(new Vector3(x, y, z));
+            }
         }
 
         @Override
@@ -654,9 +792,9 @@ public class VibeUniverse extends ApplicationAdapter {
             for (int i = 0; i < orbitPoints.size - 1; i++) {
                 Vector3 a = orbitPoints.get(i);
                 Vector3 b = orbitPoints.get(i + 1);
-                float ax = a.x + parent.position.x, az = a.z + parent.position.z;
-                float bx = b.x + parent.position.x, bz = b.z + parent.position.z;
-                sr.line(ax, 0f, az, bx, 0f, bz, color, color);
+                float ax = a.x + parent.position.x, ay = a.y + parent.position.y, az = a.z + parent.position.z;
+                float bx = b.x + parent.position.x, by = b.y + parent.position.y, bz = b.z + parent.position.z;
+                sr.line(ax, ay, az, bx, by, bz, color, color);
             }
         }
 
@@ -666,15 +804,25 @@ public class VibeUniverse extends ApplicationAdapter {
             float M = n * simDays;
             M = (float)Math.atan2(Math.sin(M), Math.cos(M));
             float E = keplerSolve(M, e);
-            float x = aEff * (MathUtils.cos(E) - e);
-            float z = bEff * MathUtils.sin(E);
-            position.set(parent.position.x + x, 0f, parent.position.z + z);
+
+            float x  = aEff * (MathUtils.cos(E) - e);
+            float z0 = bEff * MathUtils.sin(E);
+
+            float inc = inclinationDeg * MathUtils.degreesToRadians;
+            float y   = z0 * MathUtils.sin(inc);
+            float z   = z0 * MathUtils.cos(inc);
+
+            position.set(parent.position.x + x,
+                    parent.position.y + y,
+                    parent.position.z + z);
+
             Vector3 scale = new Vector3();
             instance.transform.getScale(scale);
             instance.transform.setToScaling(scale);
             instance.transform.setTranslation(position);
         }
     }
+
 
     // ---------- Camera math helpers ----------
     private void updateCameraTransform() {
