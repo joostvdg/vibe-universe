@@ -37,12 +37,12 @@ public class VibeUniverse extends ApplicationAdapter {
     private AppState state = AppState.SPLASH;
 
     // ---------- Config ----------
-    private static final float AU_TO_WORLD = 8f;               // 1 AU in world units
+    private static final float AU_TO_WORLD = 12f;                // 1 AU in world units
     private static final int ORBIT_SEGMENTS = 256;             // polyline detail
     private static final float MIN_TIME_SCALE = 0f;            // days / sec
     private static final float MAX_TIME_SCALE = 2000f;         // days / sec
     private static final float TIME_INC = 2f;                  // step when pressing [ or ]
-    private static final float MOON_CLEARANCE_GAP = 0.25f;     // extra world units so orbit doesn't touch planet
+    private static final float MOON_CLEARANCE_GAP = 0.40f;     // extra world units so orbit doesn't touch planet
 
     // ---------- Rendering ----------
     private PerspectiveCamera camera;
@@ -65,6 +65,11 @@ public class VibeUniverse extends ApplicationAdapter {
     private float zoomSpeed = 2f;
     private float orbitSpeed = 0.3f; // degrees per pixel drag
     private float panSpeed = 0.01f;  // world units per pixel
+    // Default camera snapshot (filled in create())
+    private float defaultCamDistance;
+    private float defaultCamYawDeg;
+    private float defaultCamPitchDeg;
+    private final Vector3 defaultCamTarget = new Vector3();
 
     private final Vector2 lastMouse = new Vector2();
     private boolean rightDragging = false;
@@ -93,8 +98,10 @@ public class VibeUniverse extends ApplicationAdapter {
     private final Array<PlanetInfo> feed = new Array<>();
 
     // ---------- Splash UI ----------
-    private Rectangle startButton = new Rectangle();
-    private boolean startHovered = false;
+    private Rectangle btnStatic  = new Rectangle();
+    private Rectangle btnDynamic = new Rectangle();
+    private boolean hoveredStatic  = false;
+    private boolean hoveredDynamic = false;
 
     @Override
     public void create() {
@@ -107,6 +114,12 @@ public class VibeUniverse extends ApplicationAdapter {
 
         camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         updateCameraTransform();
+
+        // Snapshot the initial camera pose for clean resets
+        defaultCamDistance = camDistance;
+        defaultCamYawDeg   = camYawDeg;
+        defaultCamPitchDeg = camPitchDeg;
+        defaultCamTarget.set(camTarget);
 
         uiCam = new OrthographicCamera();
         uiCam.setToOrtho(false, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
@@ -180,26 +193,32 @@ public class VibeUniverse extends ApplicationAdapter {
                 return true;
             }
             @Override public boolean touchDown (int screenX, int screenY, int pointer, int button) {
+                float y = uiCam.viewportHeight - screenY;
+
                 if (state == AppState.SPLASH && button == Input.Buttons.LEFT) {
-                    // Convert y
-                    float y = uiCam.viewportHeight - screenY;
-                    if (startButton.contains(screenX, y)) {
-                        startSimulation();
+                    if (btnStatic.contains(screenX, y)) {
+                        startSimulation();   // launch current sim
+                        return true;
+                    } else if (btnDynamic.contains(screenX, y)) {
+                        // Placeholder: non-functional for now. Could flash or play a sound later.
                         return true;
                     }
                 }
+
                 lastMouse.set(screenX, screenY);
-                if (button == Input.Buttons.RIGHT) rightDragging = true;
+                if (button == Input.Buttons.RIGHT)  rightDragging  = true;
                 if (button == Input.Buttons.MIDDLE) middleDragging = true;
                 return true;
             }
             @Override public boolean mouseMoved (int screenX, int screenY) {
                 if (state == AppState.SPLASH) {
                     float y = uiCam.viewportHeight - screenY;
-                    startHovered = startButton.contains(screenX, y);
+                    hoveredStatic  = btnStatic.contains(screenX, y);
+                    hoveredDynamic = btnDynamic.contains(screenX, y);
                 }
                 return false;
             }
+
             @Override public boolean touchDragged (int screenX, int screenY, int pointer) {
                 if (state != AppState.SIM) return false;
                 float dx = screenX - lastMouse.x;
@@ -229,7 +248,7 @@ public class VibeUniverse extends ApplicationAdapter {
             @Override public boolean keyDown (int keycode) {
                 if (state == AppState.SPLASH) {
                     if (keycode == Input.Keys.ENTER || keycode == Input.Keys.SPACE) {
-                        startSimulation();
+                        startSimulation(); // launches Static Sol Simplified
                         return true;
                     }
                     return false;
@@ -245,12 +264,7 @@ public class VibeUniverse extends ApplicationAdapter {
                     return true;
                 } else if (keycode == Input.Keys.R &&
                         (Gdx.input.isKeyPressed(Input.Keys.SHIFT_LEFT) || Gdx.input.isKeyPressed(Input.Keys.SHIFT_RIGHT))) {
-                    // Shift+R: reset camera
-                    camTarget.set(0,0,0);
-                    camDistance = 26f;
-                    camYawDeg = 0f;
-                    camPitchDeg = 20f;
-                    updateCameraTransform();
+                    resetCamera();
                     return true;
                 }
                 return false;
@@ -259,22 +273,47 @@ public class VibeUniverse extends ApplicationAdapter {
 
         // Apply initial moon mode
         applyMoonMode();
-        updateStartButton();
+        updateMenuButtons();
     }
 
     private void startSimulation() {
         state = AppState.SIM;
         // optional: reset time so motion starts fresh
         simTimeDays = 0f;
+        resetCamera(); // ensure consistent starting view
     }
 
-    private void updateStartButton() {
+    private void resetCamera() {
+        camDistance = defaultCamDistance;
+        camYawDeg   = defaultCamYawDeg;
+        camPitchDeg = defaultCamPitchDeg;
+        camTarget.set(defaultCamTarget);
+
+        // clear any drag state so we don't "snap" on first move
+        rightDragging = false;
+        middleDragging = false;
+
+        updateCameraTransform();
+    }
+
+
+    private void updateMenuButtons() {
         float w = uiCam.viewportWidth;
         float h = uiCam.viewportHeight;
-        float btnW = 280f;
+
+        float btnW = 360f;
         float btnH = 56f;
-        startButton.set((w - btnW) / 2f, h * 0.35f, btnW, btnH);
+        float spacing = 16f;
+
+        float centerX = (w - btnW) / 2f;
+        float baseY   = h * 0.35f;
+
+        // First item (top)
+        btnStatic.set(centerX, baseY + btnH + spacing, btnW, btnH);
+        // Second item (bottom)
+        btnDynamic.set(centerX, baseY, btnW, btnH);
     }
+
 
     private void applyMoonMode() {
         for (Moon m : moons) {
@@ -385,10 +424,9 @@ public class VibeUniverse extends ApplicationAdapter {
     private void renderSplash() {
         ScreenUtils.clear(0.03f, 0.03f, 0.06f, 1);
 
-        // Simple starfield dots (just for a little vibe)
+        // Simple starfield dots (kept lightweight)
         shapeRenderer.setProjectionMatrix(uiCam.combined);
         shapeRenderer.begin(ShapeRenderer.ShapeType.Point);
-        // Gdx.gl.glPointSize(1f);
         int stars = 300;
         for (int i = 0; i < stars; i++) {
             float sx = MathUtils.random(0f, uiCam.viewportWidth);
@@ -397,7 +435,7 @@ public class VibeUniverse extends ApplicationAdapter {
         }
         shapeRenderer.end();
 
-        // Title + subtitle + button
+        // Titles
         uiBatch.setProjectionMatrix(uiCam.combined);
         uiBatch.begin();
 
@@ -415,44 +453,55 @@ public class VibeUniverse extends ApplicationAdapter {
         font.setColor(0.85f, 0.88f, 1f, 1f);
         font.draw(uiBatch, layout, sx, sy);
 
-        // Button label
-        String btnLabel = "Enter Simulator";
-        layout.setText(font, btnLabel);
-        float labelX = startButton.x + (startButton.width - layout.width)/2f;
-        float labelY = startButton.y + (startButton.height + layout.height)/2f;
-
         uiBatch.end();
 
-        // Button background (2D)
-        shapeRenderer.setProjectionMatrix(uiCam.combined);
+        // Draw buttons
+        Color staticBase  = hoveredStatic  ? new Color(0.2f, 0.45f, 0.8f, 1f) : new Color(0.15f, 0.35f, 0.65f, 1f);
+        Color dynamicBase = hoveredDynamic ? new Color(0.25f,0.25f,0.25f,1f)  : new Color(0.18f,0.18f,0.18f,1f);
+
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        Color base = startHovered ? new Color(0.2f, 0.45f, 0.8f, 1f) : new Color(0.15f, 0.35f, 0.65f, 1f);
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
 
-        shapeRenderer.setColor(new Color(base.r, base.g, base.b, 0.85f));
-        shapeRenderer.rect(startButton.x, startButton.y, startButton.width, startButton.height);
+        shapeRenderer.setColor(new Color(staticBase.r, staticBase.g, staticBase.b, 0.88f));
+        shapeRenderer.rect(btnStatic.x, btnStatic.y, btnStatic.width, btnStatic.height);
+
+        shapeRenderer.setColor(new Color(dynamicBase.r, dynamicBase.g, dynamicBase.b, 0.88f));
+        shapeRenderer.rect(btnDynamic.x, btnDynamic.y, btnDynamic.width, btnDynamic.height);
         shapeRenderer.end();
 
-        // Button outline
+        // Button outlines
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         shapeRenderer.setColor(0.95f, 0.98f, 1f, 1f);
-        shapeRenderer.rect(startButton.x, startButton.y, startButton.width, startButton.height);
+        shapeRenderer.rect(btnStatic.x, btnStatic.y, btnStatic.width, btnStatic.height);
+        shapeRenderer.rect(btnDynamic.x, btnDynamic.y, btnDynamic.width, btnDynamic.height);
         shapeRenderer.end();
 
-        // Draw button text after shapes
+        // Button labels
         uiBatch.begin();
         font.setColor(1f, 1f, 1f, 1f);
-        font.draw(uiBatch, btnLabel, labelX, labelY);
+
+        String lblStatic  = "Static Sol Simplified";
+        layout.setText(font, lblStatic);
+        float lxs = btnStatic.x + (btnStatic.width  - layout.width)/2f;
+        float lys = btnStatic.y + (btnStatic.height + layout.height)/2f;
+        font.draw(uiBatch, layout, lxs, lys);
+
+        String lblDynamic = "Dynamic Sol Simplified (coming soon)";
+        layout.setText(font, lblDynamic);
+        float lxd = btnDynamic.x + (btnDynamic.width - layout.width)/2f;
+        float lyd = btnDynamic.y + (btnDynamic.height + layout.height)/2f;
+        font.draw(uiBatch, layout, lxd, lyd);
 
         // Hints
-        String hint1 = "Click the button or press Enter / Space";
+        String hint1 = "Press Enter / Space to start: Static Sol Simplified";
         layout.setText(font, hint1);
         font.setColor(0.8f, 0.85f, 0.95f, 1f);
-        font.draw(uiBatch, layout, (uiCam.viewportWidth - layout.width)/2f, startButton.y - 14f);
+        font.draw(uiBatch, layout, (uiCam.viewportWidth - layout.width)/2f, btnDynamic.y - 14f);
 
         uiBatch.end();
     }
+
 
     @Override
     public void resize(int width, int height) {
@@ -463,7 +512,7 @@ public class VibeUniverse extends ApplicationAdapter {
         uiCam.setToOrtho(false, width, height);
         uiCam.update();
 
-        updateStartButton();
+        updateMenuButtons();
     }
 
     @Override
@@ -639,6 +688,7 @@ public class VibeUniverse extends ApplicationAdapter {
             camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         }
         camera.position.set(cx, cy, cz);
+        camera.up.set(0, 1, 0);
         camera.lookAt(camTarget);
         camera.near = 0.1f;
         camera.far = 4000f;
