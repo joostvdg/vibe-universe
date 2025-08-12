@@ -28,6 +28,18 @@ import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ScreenUtils;
 
+import com.badlogic.gdx.graphics.Pixmap;
+import com.badlogic.gdx.graphics.Texture;
+import com.badlogic.gdx.graphics.Texture.TextureFilter;
+import com.badlogic.gdx.graphics.g3d.attributes.TextureAttribute;
+
+
+import com.badlogic.gdx.graphics.g3d.attributes.BlendingAttribute;
+import com.badlogic.gdx.graphics.g3d.attributes.FloatAttribute;
+import com.badlogic.gdx.graphics.g3d.environment.PointLight;
+import com.badlogic.gdx.graphics.g3d.utils.MeshPartBuilder;
+
+
 import java.awt.*;
 
 public class VibeUniverse extends ApplicationAdapter {
@@ -71,6 +83,17 @@ public class VibeUniverse extends ApplicationAdapter {
     private BitmapFont font;
     private BitmapFont titleFont; // slightly larger for splash/title
     private GlyphLayout layout = new GlyphLayout();
+    // Procedural planet textures
+    private Texture txSun, txMercury, txVenus, txEarth, txMars, txJupiter, txSaturn, txUranus, txNeptune, txMoonGeneric;
+    // Saturn rings
+    private Model saturnRingModel;
+    private ModelInstance saturnRingInstance;
+    private Texture txSaturnRings;
+
+    // Keep a reference to Saturn body (so we can position/tilt the rings)
+    private Body saturnBody;
+
+
 
     // ---------- Camera control (orbit/pan/zoom) ----------
     private final Vector3 camTarget = new Vector3(0, 0, 0);
@@ -141,23 +164,123 @@ public class VibeUniverse extends ApplicationAdapter {
         uiCam.update();
 
         environment = new Environment();
-        environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.6f, 0.6f, 0.7f, 1f));
-        environment.add(new DirectionalLight().set(1f, 1f, 0.95f, -1f, -0.8f, -0.2f));
+
+        // Original ambient lighting
+        // environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.6f, 0.6f, 0.7f, 1f));
+//        environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.8f, 0.8f, 0.8f, 1f));
+//        environment.add(new DirectionalLight().set(1f, 1f, 0.95f, -1f, -0.8f, -0.2f));
+        // lower ambient so textures are visible and shadows “feel” sunlit
+        environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.18f, 0.18f, 0.22f, 1f));
+
+        // Sun as a bright, warm point light at origin
+        environment.add(new PointLight().set(1.0f, 0.96f, 0.85f, 0f, 0f, 0f, 1400f));
 
         ModelBuilder builder = new ModelBuilder();
         // Sun visual size
+//        sunModel = builder.createSphere(4f, 4f, 4f, 32, 32,
+//                new Material(ColorAttribute.createDiffuse(new Color(1f, 0.85f, 0.4f, 1f))),
+//                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+//        sunInstance = new ModelInstance(sunModel);
+//
+//        // Shared base models (we'll scale per-planet / per-moon)
+//        planetModel = builder.createSphere(1f, 1f, 1f, 24, 24,
+//                new Material(ColorAttribute.createDiffuse(new Color(0.7f, 0.8f, 1f, 1f))),
+//                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+//        moonModel = builder.createSphere(1f, 1f, 1f, 18, 18,
+//                new Material(ColorAttribute.createDiffuse(new Color(0.8f, 0.8f, 0.85f, 1f))),
+//                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+        int USAGE = VertexAttributes.Usage.Position
+                | VertexAttributes.Usage.Normal
+                | VertexAttributes.Usage.TextureCoordinates;
+
         sunModel = builder.createSphere(4f, 4f, 4f, 32, 32,
-                new Material(ColorAttribute.createDiffuse(new Color(1f, 0.85f, 0.4f, 1f))),
-                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+                new Material(), USAGE);
+
+
+
+        planetModel = builder.createSphere(1f, 1f, 1f, 24, 24,
+                new Material(), USAGE);
+
+        moonModel = builder.createSphere(1f, 1f, 1f, 18, 18,
+                new Material(), USAGE);
+
         sunInstance = new ModelInstance(sunModel);
 
-        // Shared base models (we'll scale per-planet / per-moon)
-        planetModel = builder.createSphere(1f, 1f, 1f, 24, 24,
-                new Material(ColorAttribute.createDiffuse(new Color(0.7f, 0.8f, 1f, 1f))),
-                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
-        moonModel = builder.createSphere(1f, 1f, 1f, 18, 18,
-                new Material(ColorAttribute.createDiffuse(new Color(0.8f, 0.8f, 0.85f, 1f))),
-                VertexAttributes.Usage.Position | VertexAttributes.Usage.Normal);
+        // Sun: self-illumination (emissive) so it glows without external light
+        if (sunInstance != null) {
+            for (Material m : sunInstance.materials) {
+                // keep the texture if you set one earlier
+                // m.set(TextureAttribute.createDiffuse(txSun)); // (already set in your code)
+
+                // ensure the diffuse doesn't darken the texture
+                m.set(ColorAttribute.createDiffuse(Color.WHITE));
+                // add strong warm emissive term
+                m.set(ColorAttribute.createEmissive(1.0f, 0.92f, 0.55f, 1f));
+            }
+        }
+
+
+
+        // ---- Procedural textures ----
+        txSun     = makeRadialSunTexture(512, 512, new Color(1f, 0.95f, 0.6f, 1f), new Color(1f, 0.6f, 0.2f, 1f));
+
+// Rocky-ish
+        txMercury = makeSpeckleTexture(512, 256, new Color(0.6f,0.6f,0.6f,1f), new Color(0.45f,0.45f,0.45f,1f), 0.002f);
+        txVenus   = makeSpeckleTexture(512, 256, new Color(0.95f,0.85f,0.65f,1f), new Color(0.9f,0.8f,0.6f,1f), 0.001f);
+        txEarth   = makeSpeckleTexture(512, 256, new Color(0.3f,0.55f,0.95f,1f), new Color(0.1f,0.4f,0.85f,1f), 0.0015f);
+        txMars    = makeSpeckleTexture(512, 256, new Color(0.85f,0.45f,0.3f,1f), new Color(0.7f,0.35f,0.25f,1f), 0.002f);
+
+// Gas giants—soft bands
+        txJupiter = makeBandedTexture(512, 256, new Color[]{
+                new Color(0.85f,0.78f,0.66f,1f), new Color(0.9f,0.82f,0.7f,1f),
+                new Color(0.8f,0.7f,0.58f,1f),   new Color(0.9f,0.82f,0.7f,1f),
+                new Color(0.78f,0.7f,0.58f,1f),  new Color(0.9f,0.82f,0.7f,1f)
+        }, 0.08f);
+
+        txSaturn  = makeBandedTexture(512, 256, new Color[]{
+                new Color(0.95f,0.9f,0.75f,1f),  new Color(0.92f,0.86f,0.7f,1f),
+                new Color(0.9f,0.84f,0.68f,1f),  new Color(0.92f,0.86f,0.7f,1f),
+                new Color(0.88f,0.8f,0.64f,1f),  new Color(0.92f,0.86f,0.7f,1f)
+        }, 0.06f);
+
+        txUranus  = makeBandedTexture(512, 256, new Color[]{
+                new Color(0.7f,0.9f,0.95f,1f),   new Color(0.65f,0.88f,0.95f,1f),
+                new Color(0.72f,0.92f,0.96f,1f), new Color(0.65f,0.88f,0.95f,1f)
+        }, 0.05f);
+
+        txNeptune = makeBandedTexture(512, 256, new Color[]{
+                new Color(0.35f,0.55f,1f,1f),    new Color(0.3f,0.5f,0.95f,1f),
+                new Color(0.4f,0.6f,1f,1f),      new Color(0.3f,0.5f,0.95f,1f)
+        }, 0.05f);
+
+        txMoonGeneric = makeSpeckleTexture(512, 256, new Color(0.8f,0.8f,0.85f,1f), new Color(0.7f,0.7f,0.75f,1f), 0.0025f);
+
+        // Saturn ring texture + model
+        txSaturnRings = makeSaturnRingTexture(1024, 64);
+
+        // Ring material: blended, a bit glossy
+        Material ringMat = new Material(
+                new BlendingAttribute(true, 1f),
+                TextureAttribute.createDiffuse(txSaturnRings),
+                ColorAttribute.createDiffuse(1f,1f,1f,1f),
+                FloatAttribute.createShininess(8f)
+        );
+
+        // Inner/outer radius in your world units (tweak to taste)
+        float ringInner = saturnBody != null ? saturnBody.visualScale * 2.5f : 12f;
+        float ringOuter = saturnBody != null ? saturnBody.visualScale * 4.5f : 22f;
+
+        // Build model & instance
+        saturnRingModel = createRingModel(ringInner, ringOuter, 128, ringMat);
+        saturnRingInstance = new ModelInstance(saturnRingModel);
+
+
+        // Apply to the Sun
+        for (Material m : sunInstance.materials) {
+            m.set(TextureAttribute.createDiffuse(txSun));
+        }
+
+
 
         // --------- Planets (semi-major axis in AU, e, period days, color, radius_km) ---------
         addPlanet("Mercury", 1, 0.387098f, 0.2056f,  87.969f,  new Color(0.7f,0.7f,0.7f,1f), 2440, INC_MERCURY);
@@ -168,6 +291,8 @@ public class VibeUniverse extends ApplicationAdapter {
         addPlanet("Saturn",  6, 9.5826f,   0.0565f,10759.22f, new Color(0.95f,0.9f,0.75f,1f), 58232, INC_SATURN);
         addPlanet("Uranus",  7, 19.2184f,  0.046f, 30688.5f,  new Color(0.7f,0.9f,0.95f,1f), 25362, INC_URANUS);
         addPlanet("Neptune", 8, 30.1104f,  0.0097f, 60182f,   new Color(0.5f,0.7f,1f,1f),   24622, INC_NEPTUNE);
+
+        for (Body p : planets) if (p.name.equals("Saturn")) { saturnBody = p; break; }
 
 
         // Major moons (AU, e, period days) for a quick taste
@@ -311,6 +436,106 @@ public class VibeUniverse extends ApplicationAdapter {
         updateMenuButtons();
     }
 
+    private void applyPlanetTexture(Body p) {
+        Texture tx = null;
+        switch (p.name) {
+            case "Mercury": tx = txMercury; break;
+            case "Venus":   tx = txVenus;   break;
+            case "Earth":   tx = txEarth;   break;
+            case "Mars":    tx = txMars;    break;
+            case "Jupiter": tx = txJupiter; break;
+            case "Saturn":  tx = txSaturn;  break;
+            case "Uranus":  tx = txUranus;  break;
+            case "Neptune": tx = txNeptune; break;
+        }
+        if (tx != null) {
+            // Assign the texture to all materials of this planet instance
+            for (Material m : p.instance.materials) {
+                m.set(TextureAttribute.createDiffuse(tx));
+            }
+        }
+    }
+
+    private void applyMoonTexture(Moon m) {
+        if (txMoonGeneric != null) {
+            for (Material mat : m.instance.materials) {
+                mat.set(TextureAttribute.createDiffuse(txMoonGeneric));
+            }
+        }
+    }
+
+    private Model createRingModel(float innerR, float outerR, int segments, Material material) {
+        // Build a flat ring in the XZ plane centered at origin
+        ModelBuilder mb = new ModelBuilder();
+        mb.begin();
+        long attrs = VertexAttributes.Usage.Position
+                | VertexAttributes.Usage.Normal
+                | VertexAttributes.Usage.TextureCoordinates;
+
+        MeshPartBuilder mpb = mb.part("saturn_rings", GL20.GL_TRIANGLES, attrs, material);
+        // Normal up
+        Vector3 n = new Vector3(0f, 1f, 0f);
+
+        float dTheta = MathUtils.PI2 / segments;
+        for (int i = 0; i < segments; i++) {
+            float a0 = i * dTheta;
+            float a1 = (i + 1) * dTheta;
+
+            // Outer ring vertices (u = 1), inner ring vertices (u = 0)
+            float c0 = MathUtils.cos(a0), s0 = MathUtils.sin(a0);
+            float c1 = MathUtils.cos(a1), s1 = MathUtils.sin(a1);
+
+            // Two triangles per segment (quad strip)
+            // v (radius) maps to v texcoord; u is around the ring
+            // inner
+            MeshPartBuilder.VertexInfo i0 = new MeshPartBuilder.VertexInfo()
+                    .setPos(innerR * c0, 0f, innerR * s0).setNor(n).setUV(0f, (a0 / MathUtils.PI2));
+            MeshPartBuilder.VertexInfo i1 = new MeshPartBuilder.VertexInfo()
+                    .setPos(innerR * c1, 0f, innerR * s1).setNor(n).setUV(0f, (a1 / MathUtils.PI2));
+            // outer
+            MeshPartBuilder.VertexInfo o0 = new MeshPartBuilder.VertexInfo()
+                    .setPos(outerR * c0, 0f, outerR * s0).setNor(n).setUV(1f, (a0 / MathUtils.PI2));
+            MeshPartBuilder.VertexInfo o1 = new MeshPartBuilder.VertexInfo()
+                    .setPos(outerR * c1, 0f, outerR * s1).setNor(n).setUV(1f, (a1 / MathUtils.PI2));
+
+            // Tri 1: i0, i1, o1
+            mpb.triangle(i0, i1, o1);
+            // Tri 2: i0, o1, o0
+            mpb.triangle(i0, o1, o0);
+        }
+        return mb.end();
+    }
+
+    private Texture makeSaturnRingTexture(int w, int h) {
+        // Horizontal = radial (u), vertical = around (v) — but we only vary across u
+        Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
+        for (int x = 0; x < w; x++) {
+            float u = x / (float)(w - 1); // 0=inner edge, 1=outer edge
+
+            // Base color (pale beige)
+            float r = MathUtils.lerp(0.88f, 0.96f, u);
+            float g = MathUtils.lerp(0.82f, 0.92f, u);
+            float b = MathUtils.lerp(0.70f, 0.86f, u);
+
+            // Alpha: fade in from inner edge + subtle band notches
+            float alpha = smoothstep(0.05f, 0.95f, u);
+            // Soft darker/gapped bands
+            float bands = (MathUtils.sin(u * 70f) * 0.5f + 0.5f) * 0.12f
+                    + (MathUtils.sin(u * 14f) * 0.5f + 0.5f) * 0.08f;
+            r *= (1f - bands * 0.6f);
+            g *= (1f - bands * 0.6f);
+            b *= (1f - bands * 0.6f);
+
+            int rgba = Color.rgba8888(r, g, b, alpha);
+            for (int y = 0; y < h; y++) pm.drawPixel(x, y, rgba);
+        }
+        Texture tx = new Texture(pm);
+        tx.setFilter(TextureFilter.Linear, TextureFilter.Linear);
+        pm.dispose();
+        return tx;
+    }
+
+
     private void focusOnPlanetIndex(int idx1to8) {
         for (Body p : planets) {
             if (p.index == idx1to8) {
@@ -343,6 +568,70 @@ public class VibeUniverse extends ApplicationAdapter {
         middleDragging = false;
 
         updateCameraTransform();
+    }
+
+    private Texture makeBandedTexture(int w, int h, Color[] bands, float jitter) {
+        Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
+        int nb = Math.max(1, bands.length);
+        for (int y = 0; y < h; y++) {
+            float t = (float)y / (float)(h - 1);
+            float pos = t * nb;
+            int i = Math.min(nb - 1, (int)(pos));
+            float frac = pos - i;
+
+            // base color is just the band color; optional linear blend to next
+            Color c0 = bands[i];
+            Color c1 = bands[Math.min(nb - 1, i + 1)];
+            float j = (MathUtils.random() - 0.5f) * jitter;
+            float f = MathUtils.clamp(frac + j, 0f, 1f);
+
+            float r = MathUtils.lerp(c0.r, c1.r, f);
+            float g = MathUtils.lerp(c0.g, c1.g, f);
+            float b = MathUtils.lerp(c0.b, c1.b, f);
+            int rgba = Color.rgba8888(r, g, b, 1f);
+            for (int x = 0; x < w; x++) pm.drawPixel(x, y, rgba);
+        }
+        Texture tx = new Texture(pm);
+        tx.setFilter(TextureFilter.Linear, TextureFilter.Linear);
+        pm.dispose();
+        return tx;
+    }
+
+    private Texture makeSpeckleTexture(int w, int h, Color base, Color speck, float density) {
+        Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
+        pm.setColor(base);
+        pm.fill();
+        pm.setColor(speck);
+        int count = (int)(w * h * density);
+        for (int i = 0; i < count; i++) {
+            int x = MathUtils.random(0, w - 1);
+            int y = MathUtils.random(0, h - 1);
+            pm.drawPixel(x, y);
+        }
+        Texture tx = new Texture(pm);
+        tx.setFilter(TextureFilter.Linear, TextureFilter.Linear);
+        pm.dispose();
+        return tx;
+    }
+
+    private Texture makeRadialSunTexture(int w, int h, Color inner, Color outer) {
+        Pixmap pm = new Pixmap(w, h, Pixmap.Format.RGBA8888);
+        float cx = w / 2f, cy = h / 2f, maxR = Math.max(w, h) / 2f;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                float dx = (x - cx), dy = (y - cy);
+                float r = (float)Math.sqrt(dx*dx + dy*dy) / maxR; // 0 → 1
+                float t = MathUtils.clamp(r, 0f, 1f);
+                float rcol = MathUtils.lerp(inner.r, outer.r, t);
+                float gcol = MathUtils.lerp(inner.g, outer.g, t);
+                float bcol = MathUtils.lerp(inner.b, outer.b, t);
+                pm.drawPixel(x, y, Color.rgba8888(rcol, gcol, bcol, 1f));
+            }
+        }
+        Texture tx = new Texture(pm);
+        tx.setFilter(TextureFilter.Linear, TextureFilter.Linear);
+        pm.dispose();
+        return tx;
     }
 
 
@@ -393,10 +682,16 @@ public class VibeUniverse extends ApplicationAdapter {
         return (float)(0.35 * (r / moon)); // Smaller, closer to planet scale
     }
 
+    private float smoothstep(float edge0, float edge1, float x) {
+        float t = MathUtils.clamp((x - edge0) / (edge1 - edge0), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
     private void addPlanet(String name, int index, float aAU, float e, float periodDays,
                            Color color, int radiusKm, float inclinationDeg) {
         float vis = planetVisualRadius(radiusKm);
         Body p = new Body(name, index, aAU, e, periodDays, color, planetModel, vis, inclinationDeg);
+        applyPlanetTexture(p);
         planets.add(p);
     }
 
@@ -415,6 +710,7 @@ public class VibeUniverse extends ApplicationAdapter {
         float visReal= moonVisualRadiusRealistic(radiusKm);
         Moon m = new Moon(name, parent, aAU, e, periodDays, color, moonModel,
                 visEx, visReal, inclinationDeg);
+        applyMoonTexture(m);
         moons.add(m);
     }
 
@@ -446,12 +742,28 @@ public class VibeUniverse extends ApplicationAdapter {
 
         // Update positions
         for (Body p : planets) p.updatePosition(simTimeDays);
+
+        if (saturnBody != null && saturnRingInstance != null) {
+            saturnRingInstance.transform.idt();
+
+            // Tilt the ring to match Saturn's orbit inclination (visual + simple)
+            saturnRingInstance.transform.rotate(Vector3.X, saturnBody.inclinationDeg);
+
+            // Translate to Saturn's current position
+            saturnRingInstance.transform.setTranslation(saturnBody.position);
+        }
+
         for (Moon m : moons) if (m.visible) m.updatePosition(simTimeDays);
 
         // 3D models
         modelBatch.begin(camera);
         modelBatch.render(sunInstance, environment);
-        for (Body p : planets) modelBatch.render(p.instance, environment);
+        for (Body p : planets) {
+            if (p == saturnBody && saturnRingInstance != null) {
+                modelBatch.render(saturnRingInstance, environment); // rings
+            }
+            modelBatch.render(p.instance, environment); // planet
+        }
         for (Moon m : moons) if (m.visible) modelBatch.render(m.instance, environment);
         modelBatch.end();
 
@@ -586,6 +898,19 @@ public class VibeUniverse extends ApplicationAdapter {
         if (sunModel != null) sunModel.dispose();
         if (planetModel != null) planetModel.dispose();
         if (moonModel != null) moonModel.dispose();
+        if (txSun != null) txSun.dispose();
+        if (txMercury != null) txMercury.dispose();
+        if (txVenus != null) txVenus.dispose();
+        if (txEarth != null) txEarth.dispose();
+        if (txMars != null) txMars.dispose();
+        if (txJupiter != null) txJupiter.dispose();
+        if (txSaturn != null) txSaturn.dispose();
+        if (txUranus != null) txUranus.dispose();
+        if (txNeptune != null) txNeptune.dispose();
+        if (txMoonGeneric != null) txMoonGeneric.dispose();
+        if (saturnRingModel != null) saturnRingModel.dispose();
+        if (txSaturnRings != null) txSaturnRings.dispose();
+
     }
 
     // ------------------ Orbital body ------------------
