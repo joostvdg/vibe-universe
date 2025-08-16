@@ -1,0 +1,220 @@
+{
+  "name": "Kepler-11 (compact 6)",
+  "description": "Six low-density planets packed close to a Sun-like star.",
+  "star": {
+    "color": [
+      1.0,
+      0.9,
+      0.7
+    ],
+    "emissive": [
+      1.0,
+      0.9,
+      0.7
+    ],
+    "radiusVisual": 2.6
+  },
+  "bodies": [
+    {
+      "type": "planet",
+      "name": "Kepler-11 b",
+      "index": 1,
+      "aAU": 0.091,
+      "e": 0.02,
+      "periodDays": 10.3,
+      "radiusKm": 20000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 10.3,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    },
+    {
+      "type": "planet",
+      "name": "Kepler-11 c",
+      "index": 2,
+      "aAU": 0.107,
+      "e": 0.02,
+      "periodDays": 13.0,
+      "radiusKm": 20000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 13.0,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    },
+    {
+      "type": "planet",
+      "name": "Kepler-11 d",
+      "index": 3,
+      "aAU": 0.155,
+      "e": 0.02,
+      "periodDays": 22.7,
+      "radiusKm": 25000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 22.7,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    },
+    {
+      "type": "planet",
+      "name": "Kepler-11 e",
+      "index": 4,
+      "aAU": 0.195,
+      "e": 0.02,
+      "periodDays": 32.0,
+      "radiusKm": 25000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 32.0,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    },
+    {
+      "type": "planet",
+      "name": "Kepler-11 f",
+      "index": 5,
+      "aAU": 0.25,
+      "e": 0.02,
+      "periodDays": 46.7,
+      "radiusKm": 25000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 46.7,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    },
+    {
+      "type": "planet",
+      "name": "Kepler-11 g",
+      "index": 6,
+      "aAU": 0.47,
+      "e": 0.02,
+      "periodDays": 118.4,
+      "radiusKm": 25000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 118.4,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.85,
+            0.78,
+            0.66
+          ],
+          [
+            0.9,
+            0.82,
+            0.7
+          ],
+          [
+            0.8,
+            0.7,
+            0.58
+          ]
+        ],
+        "jitter": 0.08
+      }
+    }
+  ],
+  "distanceScale": 1.8,
+  "truePlanetProportions": true,
+  "trueMoonProportionsInRealistic": true
+}

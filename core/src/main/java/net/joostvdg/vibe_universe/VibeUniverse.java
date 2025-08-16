@@ -16,6 +16,7 @@ import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
+import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.g3d.Environment;
 import com.badlogic.gdx.graphics.g3d.Material;
 import com.badlogic.gdx.graphics.g3d.Model;
@@ -52,8 +53,6 @@ public class VibeUniverse extends ApplicationAdapter {
     private static final float EARTH_DAY_DAYS = 0.99726968f; // sidereal-ish
     private static final float EARTH_SMOOTH_SECONDS = 20f;
 
-// Per-body accumulated spin angle for SMOOTH mode
-
 
     // -------- Constants --------
     private static final float AU_TO_WORLD = 12f;
@@ -70,6 +69,17 @@ public class VibeUniverse extends ApplicationAdapter {
     private SpriteBatch uiBatch;
     private BitmapFont font, titleFont;
     private GlyphLayout layout = new GlyphLayout();
+
+    // --- In-sim top bar + icons ---
+    private Rectangle btnSimBack = new Rectangle();     // back to main
+    // UI scaling
+    private float uiScale = 1f;           // 1.0 windowed, 1.5 fullscreen
+    private float baseTopBarH = 36f;
+    private float baseIconW = 28f, baseIconH = 22f, baseIconPad = 6f;
+    private float topBarH, iconW, iconH, iconPad;
+    private Array<Rectangle> simIconRects = new Array<>();
+    // order of icons on the right side:
+    private enum SimIcon { PAUSE, ORBITS, AXES, COMPRESS, LIGHT, MOON, SPIN }
 
     // -------- Models/Textures --------
     private Model sunModel, planetModel, moonModel, saturnRingModel;
@@ -116,6 +126,8 @@ public class VibeUniverse extends ApplicationAdapter {
     private Array<ExoEntry> exoEntries = new Array<>();
     private int exoIndex=0;
     private Rectangle btnPrev=new Rectangle(), btnNext=new Rectangle(), btnLoad=new Rectangle();
+    private Rectangle btnExoBack = new Rectangle();
+    private boolean hoveredExoBack = false;
     private boolean hoveredPrev, hoveredNext, hoveredLoad;
 
     // -------- Data Feed --------
@@ -385,16 +397,28 @@ public class VibeUniverse extends ApplicationAdapter {
     }
 
 
-    @Override public void create(){
-        modelBatch=new ModelBatch();
-        shapeRenderer=new ShapeRenderer();
-        uiBatch=new SpriteBatch();
-        font=new BitmapFont(); titleFont=new BitmapFont(); titleFont.getData().setScale(1.4f);
+    @Override public void create() {
+        modelBatch = new ModelBatch();
+        shapeRenderer = new ShapeRenderer();
+        uiBatch = new SpriteBatch();
 
-        camera=new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
+        font = new BitmapFont();
+        titleFont = new BitmapFont();
+        titleFont.getData().setScale(1.4f);
+
+        // Smooth filtering for all textures used by the fonts (avoid duplicate textures)
+        for (BitmapFont f : new BitmapFont[]{ font, titleFont }) {
+            for (TextureRegion region : f.getRegions()) {
+                Texture tex = region.getTexture();
+                tex.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
+            }
+        }
+
+        camera = new PerspectiveCamera(67, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         updateCamera();
 
         uiCam=new OrthographicCamera(); uiCam.setToOrtho(false, Gdx.graphics.getWidth(), Gdx.graphics.getHeight()); uiCam.update();
+        updateUiScale();
 
         environment=new Environment();
         environment.set(new ColorAttribute(ColorAttribute.AmbientLight, 0.20f,0.20f,0.24f,1f));
@@ -440,11 +464,60 @@ public class VibeUniverse extends ApplicationAdapter {
                     if (btnNext.contains(sx,y)){ if (exoEntries.size>0) exoIndex=(exoIndex+1)%exoEntries.size; return true; }
                     if (btnLoad.contains(sx,y)){ if (exoEntries.size>0) { loadExoAndStart(); } return true; }
                 }
+
+                if (state == AppState.SIM && button == Input.Buttons.LEFT){
+                    // Back button?
+                    if (btnSimBack.contains(sx, y)) { state = AppState.SPLASH; return true; }
+                    // Icons?
+                    for (int i=0;i<simIconRects.size;i++){
+                        if (simIconRects.get(i).contains(sx, y)){
+                            handleSimIconClick(SimIcon.values()[i]);
+                            return true;
+                        }
+                    }
+                }
+                if (state == AppState.EXO_MENU && button == Input.Buttons.LEFT){
+                    if (btnExoBack.contains(sx, y)) { state = AppState.SPLASH; return true; }
+                }
+
+
                 lastMouse.set(sx,sy);
                 if (button==Input.Buttons.RIGHT) rightDragging=true;
                 if (button==Input.Buttons.MIDDLE) middleDragging=true;
                 return true;
             }
+
+            private void handleSimIconClick(SimIcon which){
+                switch (which){
+                    case PAUSE: paused = !paused; break;
+                    case ORBITS: drawOrbits = !drawOrbits; break;
+                    case AXES: showAxes = !showAxes; break;
+                    case COMPRESS:
+                        compressDistances = !compressDistances;
+                        for (Body p: planets) p.rebuildOrbitPolyline();
+                        for (Moon m: moons) m.initOrbit();
+                        break;
+                    case LIGHT:
+                        extendedLighting = !extendedLighting;
+                        applyLightingProfile();
+                        break;
+                    case MOON:
+                        switch (moonMode){
+                            case EXAGGERATED: moonMode = MoonMode.REALISTIC; break;
+                            case REALISTIC:   moonMode = MoonMode.HIDDEN;    break;
+                            default:          moonMode = MoonMode.EXAGGERATED; break;
+                        }
+                        applyMoonMode();
+                        for (Body p : planets) enforceMoonSeparation(p);
+                        rebuildSaturnRings();
+                        break;
+                    case SPIN:
+                        spinMode = (spinMode == SpinMode.SMOOTH ? SpinMode.REALISTIC : SpinMode.SMOOTH);
+                        break;
+                }
+            }
+
+
             @Override public boolean mouseMoved(int sx,int sy){
                 float y=uiCam.viewportHeight - sy;
                 if (state==AppState.SPLASH){
@@ -452,6 +525,10 @@ public class VibeUniverse extends ApplicationAdapter {
                 } else if (state==AppState.EXO_MENU){
                     hoveredPrev=btnPrev.contains(sx,y); hoveredNext=btnNext.contains(sx,y); hoveredLoad=btnLoad.contains(sx,y);
                 }
+                if (state == AppState.EXO_MENU){
+                    hoveredExoBack = btnExoBack.contains(sx, y);
+                }
+
                 return false;
             }
             @Override public boolean touchDragged(int sx,int sy,int p){
@@ -503,6 +580,10 @@ public class VibeUniverse extends ApplicationAdapter {
                     spinMode = (spinMode == SpinMode.SMOOTH) ? SpinMode.REALISTIC : SpinMode.SMOOTH;
                     return true;
                 }
+                if (state == AppState.SIM){
+                    if (key == Input.Keys.ESCAPE){ state = AppState.SPLASH; return true; }
+                }
+
 
                 if (key == Input.Keys.T) {
                     truePlanetProportions = !truePlanetProportions;
@@ -545,24 +626,123 @@ public class VibeUniverse extends ApplicationAdapter {
 
         // scan exo
         refreshExoEntries();
+        Gdx.app.log("Vibe", "Exo models loaded: " + exoEntries.size);
+        if (exoEntries.size == 0) {
+            Gdx.app.log("Vibe", "TIP: If running from IDE, ensure resources are on the classpath. " +
+                    "Gradle: put under core/src/main/resources/. Maven: same path in resources.");
+        }
+
     }
+
+    private void drawTextShadowed(BitmapFont f, SpriteBatch b, CharSequence text, float x, float y, Color color){
+        // Drop shadow
+        Color old = f.getColor();
+        f.setColor(0f,0f,0f, color.a*0.65f);
+        f.draw(b, text, x + 2*uiScale, y - 2*uiScale);
+        // Main
+        f.setColor(color);
+        f.draw(b, text, x, y);
+        f.setColor(old);
+    }
+
+    private void drawTextOutlined(BitmapFont f, SpriteBatch b, CharSequence text, float x, float y, Color color){
+        // Quick 4-direction outline
+        Color old = f.getColor();
+        f.setColor(0f,0f,0f, color.a*0.9f);
+        float o = 1.5f * uiScale;
+        f.draw(b, text, x-o, y);
+        f.draw(b, text, x+o, y);
+        f.draw(b, text, x, y-o);
+        f.draw(b, text, x, y+o);
+        // Main
+        f.setColor(color);
+        f.draw(b, text, x, y);
+        f.setColor(old);
+    }
+
+
+    private void updateUiScale(){
+        // 1.5x when fullscreen, else 1.0x
+        uiScale = Gdx.graphics.isFullscreen() ? 1.5f : 1.0f;
+
+        topBarH = baseTopBarH * uiScale;
+        iconW   = baseIconW   * uiScale;
+        iconH   = baseIconH   * uiScale;
+        iconPad = baseIconPad * uiScale;
+
+        // scale fonts too (see section 2 for smoothing + outline/shadow)
+        titleFont.getData().setScale(1.4f * uiScale);
+        font.getData().setScale(1.0f * uiScale);
+
+        // re-layout UI rects
+        updateTopBarButtons();
+        updateSplashButtons();
+        updateExoButtons();
+    }
+
 
     private void startSim(){ state=AppState.SIM; simTimeDays=0f; resetCamera(); }
     private void enterExoMenu(){ state=AppState.EXO_MENU; }
 
-    private void refreshExoEntries(){
+    // Java
+    private void logPaths() {
+        FileHandle localRoot = Gdx.files.local("");
+        FileHandle internalRoot = Gdx.files.internal("");
+        FileHandle exoLocal = Gdx.files.local("models/exo");
+        FileHandle exoInternal = Gdx.files.internal("models/exo");
+
+        Gdx.app.log("PATH", "Local root absolute: " + localRoot.file().getAbsolutePath());
+        Gdx.app.log("PATH", "CWD (.) absolute: " + new java.io.File(".").getAbsolutePath());
+        Gdx.app.log("PATH", "Internal root path(): " + internalRoot.path() + " (exists=" + internalRoot.exists() + ")");
+        Gdx.app.log("PATH", "Local exo path: " + exoLocal.file().getAbsolutePath() + " (exists=" + exoLocal.exists() + ")");
+        Gdx.app.log("PATH", "Internal exo path(): " + exoInternal.path() + " (exists=" + exoInternal.exists() + ")");
+
+        // If you need to enumerate local root:
+        for (FileHandle f : localRoot.list()) {
+            Gdx.app.log("PATH", "Local entry: " + f.path());
+        }
+    }
+
+    private void refreshExoEntries() {
         exoEntries.clear();
         FileHandle base = Gdx.files.internal("models/exo");
-        if (base.exists()){
-            for (FileHandle f : base.list("json")){
-                try{
-                    JsonValue r = new JsonReader().parse(f);
-                    exoEntries.add(new ExoEntry(f.path(), r.getString("name","Unknown"), r.getString("description","")));
-                }catch(Exception ignore){}
+        logPaths();
+
+
+        if (!base.exists() || base.list() == null || base.list().length == 0) {
+            // Fallbacks for dev (adjust paths to your project)
+            FileHandle dev1 = Gdx.files.local("assets/models/exo");
+            FileHandle dev2 = Gdx.files.local("core/src/main/resources/models/exo");
+            if (dev1.exists()) base = dev1;
+            else if (dev2.exists()) base = dev2;
+        }
+
+        if (!base.exists()) {
+            Gdx.app.error("Vibe", "Exo models folder not found. Expected one of: "
+                    + "assets/models/exo or core/src/main/resources/models/exo");
+            return;
+        }
+
+        FileHandle[] files = base.list("json");
+        if (files == null || files.length == 0) {
+            Gdx.app.error("Vibe", "No *.json files in " + base.path());
+            return;
+        }
+
+        for (FileHandle f : files) {
+            try {
+                JsonValue r = new JsonReader().parse(f);
+                exoEntries.add(new ExoEntry(f.path(),
+                        r.getString("name", f.nameWithoutExtension()),
+                        r.getString("description", "")));
+            } catch (Exception ex) {
+                Gdx.app.error("Vibe", "Failed parsing " + f.path(), ex);
             }
         }
-        exoIndex=0;
+        exoIndex = 0;
+        Gdx.app.log("Vibe", "Loaded exo models: " + exoEntries.size);
     }
+
 
     private void loadExoAndStart(){
         ExoEntry e = exoEntries.get(exoIndex);
@@ -580,6 +760,7 @@ public class VibeUniverse extends ApplicationAdapter {
     @Override public void render(){
         if (state==AppState.SPLASH){ renderSplash(); return; }
         if (state==AppState.EXO_MENU){ renderExoMenu(); return; }
+
 
         float dt=Gdx.graphics.getDeltaTime();
         if (!paused) simTimeDays += timeScaleDaysPerSec * dt;
@@ -656,60 +837,194 @@ public class VibeUniverse extends ApplicationAdapter {
         font.draw(uiBatch, "Controls:  Right-drag=orbit  Middle-drag=pan  Wheel=zoom  Shift+R=reset  1-8=focus", x, y); y -= 16f;
         font.draw(uiBatch, "Toggle:    Space=pause  O=orbits  X=axes  C=distance-compress  L=extended-light  M=moon-mode, V=spin mode (Smooth/Realistic)\n", x, y); y -= 16f;
         font.draw(uiBatch, "Moon mode: EXAGGERATED → REALISTIC → HIDDEN", x, y);
-
         uiBatch.end();
+
+        if (state==AppState.SIM ) {
+            drawSimTopBar();
+        }
     }
 
-    private void renderSplash(){
-        ScreenUtils.clear(0.03f,0.03f,0.06f,1);
+    private void drawSimTopBar(){
+        uiCam.update();
         shapeRenderer.setProjectionMatrix(uiCam.combined);
+
+        // Bar background strip (subtle)
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.setColor(1f,1f,1f,0.75f);
-        for (Vector2 s:starfield) shapeRenderer.circle(s.x,s.y,1.2f);
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        shapeRenderer.setColor(0f,0f,0f,0.35f);
+        shapeRenderer.rect(0f, uiCam.viewportHeight - topBarH, uiCam.viewportWidth, topBarH);
         shapeRenderer.end();
 
-        uiBatch.setProjectionMatrix(uiCam.combined); uiBatch.begin();
-        String title="Vibe Universe";
-        GlyphLayout tl=new GlyphLayout(titleFont,title);
-        float tx=(uiCam.viewportWidth-tl.width)/2f, ty=uiCam.viewportHeight*0.70f;
-        titleFont.setColor(1f,0.95f,0.8f,1f); titleFont.draw(uiBatch, tl, tx, ty);
-        String subtitle="Choose a mode"; GlyphLayout sub=new GlyphLayout(font,subtitle);
-        font.setColor(0.85f,0.88f,1f,1f); font.draw(uiBatch, sub, (uiCam.viewportWidth-sub.width)/2f, ty-28f);
-        uiBatch.end();
-
-        Color staticBase= hoveredStatic? new Color(0.2f,0.45f,0.8f,1f) : new Color(0.15f,0.35f,0.65f,1f);
-        Color dynamicBase= hoveredDynamic? new Color(0.25f,0.25f,0.25f,1f) : new Color(0.18f,0.18f,0.18f,1f);
-        Color exoBase= hoveredExo? new Color(0.28f,0.5f,0.28f,1f) : new Color(0.2f,0.4f,0.2f,1f);
-
+        // Back button
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
-        Gdx.gl.glEnable(GL20.GL_BLEND); Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
-        shapeRenderer.setColor(new Color(staticBase.r,staticBase.g,staticBase.b,0.88f));
-        shapeRenderer.rect(btnStatic.x,btnStatic.y,btnStatic.width,btnStatic.height);
-        shapeRenderer.setColor(new Color(dynamicBase.r,dynamicBase.g,dynamicBase.b,0.88f));
-        shapeRenderer.rect(btnDynamic.x,btnDynamic.y,btnDynamic.width,btnDynamic.height);
-        shapeRenderer.setColor(new Color(exoBase.r,exoBase.g,exoBase.b,0.88f));
-        shapeRenderer.rect(btnExo.x,btnExo.y,btnExo.width,btnExo.height);
+        shapeRenderer.setColor(0.2f,0.45f,0.8f,0.9f);
+        shapeRenderer.rect(btnSimBack.x, btnSimBack.y, btnSimBack.width, btnSimBack.height);
         shapeRenderer.end();
 
         shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         shapeRenderer.setColor(0.95f,0.98f,1f,1f);
-        shapeRenderer.rect(btnStatic.x,btnStatic.y,btnStatic.width,btnStatic.height);
-        shapeRenderer.rect(btnDynamic.x,btnDynamic.y,btnDynamic.width,btnDynamic.height);
-        shapeRenderer.rect(btnExo.x,btnExo.y,btnExo.width,btnExo.height);
+        shapeRenderer.rect(btnSimBack.x, btnSimBack.y, btnSimBack.width, btnSimBack.height);
         shapeRenderer.end();
 
-        uiBatch.begin(); font.setColor(1f,1f,1f,1f);
-        String lblStatic="Static Sol Simplified"; GlyphLayout gl1=new GlyphLayout(font,lblStatic);
-        font.draw(uiBatch, gl1, btnStatic.x+(btnStatic.width-gl1.width)/2f, btnStatic.y+(btnStatic.height+gl1.height)/2f);
-        String lblDynamic="Dynamic Sol Simplified (coming soon)"; GlyphLayout gl2=new GlyphLayout(font,lblDynamic);
-        font.draw(uiBatch, gl2, btnDynamic.x+(btnDynamic.width-gl2.width)/2f, btnDynamic.y+(btnDynamic.height+gl2.height)/2f);
-        String lblExo="Exo Planets"; GlyphLayout gl3=new GlyphLayout(font,lblExo);
-        font.draw(uiBatch, gl3, btnExo.x+(btnExo.width-gl3.width)/2f, btnExo.y+(btnExo.height+gl3.height)/2f);
-        String hint="Press E for Exo Planets"; GlyphLayout gl4=new GlyphLayout(font,hint);
-        font.setColor(0.8f,0.85f,0.95f,1f);
-        font.draw(uiBatch, gl4, (uiCam.viewportWidth-gl4.width)/2f, btnExo.y-14f);
+        uiBatch.setProjectionMatrix(uiCam.combined);
+        uiBatch.begin();
+        font.setColor(1f,1f,1f,1f);
+        font.draw(uiBatch, "Back", btnSimBack.x + 10f, btnSimBack.y + btnSimBack.height - 6f);
+
+        // Icons on right (state-colored)
+        for (int i=0;i<simIconRects.size;i++){
+            Rectangle r = simIconRects.get(i);
+            SimIcon icon = SimIcon.values()[i];
+            boolean on = isIconOn(icon);
+            String label = iconLabel(icon);
+
+            // pill background
+            uiBatch.end();
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+            if (icon == SimIcon.MOON){
+                // Tri-state color
+                switch (moonMode){
+                    case EXAGGERATED: shapeRenderer.setColor(0.35f,0.55f,0.95f,0.9f); break;
+                    case REALISTIC:   shapeRenderer.setColor(0.35f,0.8f,0.5f,0.9f);  break;
+                    default:          shapeRenderer.setColor(0.25f,0.25f,0.25f,0.9f); break;
+                }
+            } else if (icon == SimIcon.SPIN){
+                shapeRenderer.setColor(spinMode==SpinMode.SMOOTH ? 0.35f:0.65f,
+                        spinMode==SpinMode.SMOOTH ? 0.8f:0.55f,
+                        0.5f, 0.9f);
+            } else {
+                shapeRenderer.setColor(on ? 0.32f:0.18f, on ? 0.68f:0.18f, on ? 0.38f:0.18f, 0.9f);
+            }
+            shapeRenderer.rect(r.x, r.y, r.width, r.height);
+            shapeRenderer.end();
+
+            shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+            shapeRenderer.setColor(0.95f,0.98f,1f,1f);
+            shapeRenderer.rect(r.x, r.y, r.width, r.height);
+            shapeRenderer.end();
+
+            uiBatch.begin();
+            font.setColor(1f,1f,1f,1f);
+            GlyphLayout gl = new GlyphLayout(font, label);
+            float tx = r.x + (r.width - gl.width)/2f;
+            float ty = r.y + (r.height + gl.height)/2f;
+            font.draw(uiBatch, gl, tx, ty);
+        }
         uiBatch.end();
     }
+
+    private boolean isIconOn(SimIcon ic){
+        switch (ic){
+            case PAUSE:   return paused;
+            case ORBITS:  return drawOrbits;
+            case AXES:    return showAxes;
+            case COMPRESS:return compressDistances;
+            case LIGHT:   return extendedLighting;
+            case MOON:    return moonMode != MoonMode.HIDDEN;
+            case SPIN:    return spinMode == SpinMode.SMOOTH; // treat Smooth as "on"
+        }
+        return false;
+    }
+    private String iconLabel(SimIcon ic){
+        switch (ic){
+            case PAUSE:   return "⏸";
+            case ORBITS:  return "O";
+            case AXES:    return "X";
+            case COMPRESS:return "C";
+            case LIGHT:   return "L";
+            case MOON:
+                switch (moonMode){ case EXAGGERATED: return "ME"; case REALISTIC: return "MR"; default: return "MØ"; }
+            case SPIN:    return (spinMode==SpinMode.SMOOTH ? "Vs" : "Vr");
+        }
+        return "?";
+    }
+
+
+    private void renderSplash(){
+        ScreenUtils.clear(0.03f,0.03f,0.06f,1);
+
+        // Starfield background
+        shapeRenderer.setProjectionMatrix(uiCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(1f,1f,1f,0.75f);
+        for (Vector2 s : starfield) shapeRenderer.circle(s.x, s.y, 1.2f * uiScale);
+        shapeRenderer.end();
+
+        // Title & subtitle
+        String title = "Vibe Universe";
+        GlyphLayout tl = new GlyphLayout(titleFont, title);
+        float tx = (uiCam.viewportWidth - tl.width) / 2f;
+        float ty = uiCam.viewportHeight * 0.70f;
+
+        uiBatch.setProjectionMatrix(uiCam.combined);
+        uiBatch.begin();
+        drawTextOutlined(titleFont, uiBatch, title, tx, ty, new Color(1f, 0.95f, 0.8f, 1f));
+
+        String subtitle = "Choose a mode";
+        GlyphLayout sub = new GlyphLayout(font, subtitle);
+        float sx = (uiCam.viewportWidth - sub.width) / 2f;
+        float sy = ty - (28f * uiScale);
+        drawTextShadowed(font, uiBatch, subtitle, sx, sy, new Color(0.85f, 0.88f, 1f, 1f));
+        uiBatch.end();
+
+        // Button fills (hover-sensitive)
+        Color staticBase  = hoveredStatic  ? new Color(0.20f, 0.45f, 0.80f, 1f) : new Color(0.15f, 0.35f, 0.65f, 1f);
+        Color dynamicBase = hoveredDynamic ? new Color(0.25f, 0.25f, 0.25f, 1f) : new Color(0.18f, 0.18f, 0.18f, 1f);
+        Color exoBase     = hoveredExo     ? new Color(0.28f, 0.50f, 0.28f, 1f) : new Color(0.20f, 0.40f, 0.20f, 1f);
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        shapeRenderer.setColor(staticBase.r, staticBase.g, staticBase.b, 0.88f);
+        shapeRenderer.rect(btnStatic.x, btnStatic.y, btnStatic.width, btnStatic.height);
+        shapeRenderer.setColor(dynamicBase.r, dynamicBase.g, dynamicBase.b, 0.88f);
+        shapeRenderer.rect(btnDynamic.x, btnDynamic.y, btnDynamic.width, btnDynamic.height);
+        shapeRenderer.setColor(exoBase.r, exoBase.g, exoBase.b, 0.88f);
+        shapeRenderer.rect(btnExo.x, btnExo.y, btnExo.width, btnExo.height);
+        shapeRenderer.end();
+
+        // Button borders
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        shapeRenderer.setColor(0.95f, 0.98f, 1f, 1f);
+        shapeRenderer.rect(btnStatic.x, btnStatic.y, btnStatic.width, btnStatic.height);
+        shapeRenderer.rect(btnDynamic.x, btnDynamic.y, btnDynamic.width, btnDynamic.height);
+        shapeRenderer.rect(btnExo.x, btnExo.y, btnExo.width, btnExo.height);
+        shapeRenderer.end();
+
+        // Button labels
+        uiBatch.begin();
+        font.setColor(1f, 1f, 1f, 1f);
+
+        String lblStatic  = "Static Sol Simplified";
+        String lblDynamic = "Dynamic Sol Simplified (coming soon)";
+        String lblExo     = "Exo Planets";
+
+        GlyphLayout gl1 = new GlyphLayout(font, lblStatic);
+        GlyphLayout gl2 = new GlyphLayout(font, lblDynamic);
+        GlyphLayout gl3 = new GlyphLayout(font, lblExo);
+
+        float t1x = btnStatic.x  + (btnStatic.width  - gl1.width) / 2f;
+        float t1y = btnStatic.y  + (btnStatic.height + gl1.height) / 2f;
+        float t2x = btnDynamic.x + (btnDynamic.width - gl2.width) / 2f;
+        float t2y = btnDynamic.y + (btnDynamic.height + gl2.height) / 2f;
+        float t3x = btnExo.x     + (btnExo.width     - gl3.width) / 2f;
+        float t3y = btnExo.y     + (btnExo.height    + gl3.height) / 2f;
+
+        drawTextShadowed(font, uiBatch, lblStatic,  t1x, t1y, Color.WHITE);
+        drawTextShadowed(font, uiBatch, lblDynamic, t2x, t2y, Color.WHITE);
+        drawTextShadowed(font, uiBatch, lblExo,     t3x, t3y, Color.WHITE);
+
+        // Hint
+        String hint = "Press E for Exo Planets";
+        GlyphLayout gl4 = new GlyphLayout(font, hint);
+        float hx = (uiCam.viewportWidth - gl4.width) / 2f;
+        float hy = btnExo.y - (14f * uiScale);
+        drawTextShadowed(font, uiBatch, hint, hx, hy, new Color(0.8f, 0.85f, 0.95f, 1f));
+
+        uiBatch.end();
+    }
+
 
     private void renderExoMenu(){
         ScreenUtils.clear(0.02f,0.02f,0.05f,1);
@@ -738,6 +1053,25 @@ public class VibeUniverse extends ApplicationAdapter {
         }
         uiBatch.end();
 
+        // Back button box
+        shapeRenderer.setProjectionMatrix(uiCam.combined);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.setColor(hoveredExoBack?0.25f:0.18f,0.18f,0.18f,0.9f);
+        shapeRenderer.rect(btnExoBack.x, btnExoBack.y, btnExoBack.width, btnExoBack.height);
+        shapeRenderer.end();
+
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
+        shapeRenderer.setColor(0.95f,0.98f,1f,1f);
+        shapeRenderer.rect(btnExoBack.x, btnExoBack.y, btnExoBack.width, btnExoBack.height);
+        shapeRenderer.end();
+
+        uiBatch.begin();
+        GlyphLayout glBack=new GlyphLayout(font,"Back");
+        font.setColor(1f,1f,1f,1f);
+        font.draw(uiBatch, glBack, btnExoBack.x+(btnExoBack.width-glBack.width)/2f, btnExoBack.y+(btnExoBack.height+glBack.height)/2f);
+        uiBatch.end();
+
+
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         Gdx.gl.glEnable(GL20.GL_BLEND); Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         shapeRenderer.setColor(hoveredPrev?0.25f:0.18f,0.18f,0.18f,0.9f); shapeRenderer.rect(btnPrev.x,btnPrev.y,btnPrev.width,btnPrev.height);
@@ -759,13 +1093,24 @@ public class VibeUniverse extends ApplicationAdapter {
         font.draw(uiBatch, glNext, btnNext.x+(btnNext.width-glNext.width)/2f, btnNext.y+(btnNext.height+glNext.height)/2f);
         GlyphLayout glLoad=new GlyphLayout(font,"Load Model");
         font.draw(uiBatch, glLoad, btnLoad.x+(btnLoad.width-glLoad.width)/2f, btnLoad.y+(btnLoad.height+glLoad.height)/2f);
+
+        // log message if no models where loaded
+        if (exoEntries.size==0) {
+            String msg2="Looked in: models/exo/ (classpath). Bundle JSONs under core/src/main/resources/models/exo/";
+            GlyphLayout g2=new GlyphLayout(font,msg2);
+            drawTextShadowed(font, uiBatch, msg2, (uiCam.viewportWidth-g2.width)/2f, ty-60f*uiScale, new Color(1f,0.8f,0.8f,1f));
+        }
+
         uiBatch.end();
     }
 
     @Override public void resize(int w,int h){
         camera.viewportWidth=w; camera.viewportHeight=h; camera.update();
         uiCam.setToOrtho(false,w,h); uiCam.update();
-        updateSplashButtons(); updateExoButtons();
+        updateUiScale();
+        updateTopBarButtons();
+        updateSplashButtons();
+        updateExoButtons();
     }
 
     @Override public void dispose(){
@@ -779,6 +1124,25 @@ public class VibeUniverse extends ApplicationAdapter {
         if (txSunHalo!=null) txSunHalo.dispose();
         if (txSaturnRings!=null) txSaturnRings.dispose();
     }
+
+    private void updateTopBarButtons(){
+        // SIM top bar: back on left, icons on right
+        float w = uiCam.viewportWidth;
+        btnSimBack.set(10f, uiCam.viewportHeight - topBarH, 100f, topBarH - 8f);
+
+        // icon strip on right
+        simIconRects.clear();
+        float x = w - iconPad - iconW;
+        float y = uiCam.viewportHeight - topBarH + (topBarH - iconH)/2f - 2f;
+        for (int i=0;i<SimIcon.values().length;i++){
+            simIconRects.add(new Rectangle(x, y, iconW, iconH));
+            x -= (iconW + iconPad);
+        }
+
+        // EXO back (top-left)
+        btnExoBack.set(10f, uiCam.viewportHeight - topBarH, 120f, topBarH - 8f);
+    }
+
 
     // ----- Camera helpers -----
     private void getCameraBasis(Vector3 outRight, Vector3 outUp, Vector3 outForward){

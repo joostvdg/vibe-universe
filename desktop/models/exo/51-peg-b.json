@@ -1,0 +1,55 @@
+{
+  "name": "51 Pegasi b (hot Jupiter)",
+  "description": "The first exoplanet found around a Sun-like star; a hot Jupiter on a ~4.2-day orbit.",
+  "star": {
+    "color": [
+      1.0,
+      0.95,
+      0.8
+    ],
+    "emissive": [
+      1.0,
+      0.95,
+      0.8
+    ],
+    "radiusVisual": 2.4
+  },
+  "bodies": [
+    {
+      "type": "planet",
+      "name": "51 Pegasi b",
+      "index": 1,
+      "aAU": 0.052,
+      "e": 0.01,
+      "periodDays": 4.23,
+      "radiusKm": 100000,
+      "inclinationDeg": 0.0,
+      "spinTiltDeg": 0.0,
+      "rotationDays": 4.23,
+      "texture": {
+        "type": "banded",
+        "bands": [
+          [
+            0.95,
+            0.8,
+            0.6
+          ],
+          [
+            0.9,
+            0.75,
+            0.55
+          ],
+          [
+            0.96,
+            0.82,
+            0.62
+          ]
+        ],
+        "jitter": 0.09
+      }
+    }
+  ],
+  "distanceScale": 1.2,
+  "truePlanetProportions": true,
+  "trueMoonProportionsInRealistic": true
+}
